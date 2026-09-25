@@ -972,7 +972,7 @@ function countryFlag(country) {
 
     const flags = {
 
-        "England": "🇬🇧",
+        "England": "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
         "France": "🇫🇷",
         "Spain": "🇪🇸",
         "Germany": "🇩🇪",
@@ -988,7 +988,7 @@ function countryFlag(country) {
         "Saudi-Arabia": "🇸🇦",
         "Saudi Arabia": "🇸🇦",
         "Turkey": "🇹🇷",
-        "Scotland": "🏴",
+        "Scotland": "🏴󠁧󠁢󠁳󠁣󠁴󠁿",
         "Greece": "🇬🇷",
         "Switzerland": "🇨🇭",
         "Austria": "🇦🇹",
