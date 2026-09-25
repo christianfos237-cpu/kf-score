@@ -592,7 +592,7 @@ function card(m) {
             <img src="${t.home.logo || ""}">
 
             <span>
-                ${t.home.name}
+                ${translateTeam(t.home.name)}
             </span>
 
         </div>
@@ -612,7 +612,7 @@ function card(m) {
         <div class="team away">
 
             <span>
-                ${t.away.name}
+                ${translateTeam(t.away.name)}
             </span>
 
             <img src="${t.away.logo || ""}">
@@ -1056,9 +1056,9 @@ async function detailPage(id) {
                 </p>
 
                 <p>
-                    ${data.fixture.lineups[0].team.name}
-                    —
-                    ${data.fixture.lineups[1].team.name}
+                    ${translateTeam(data.fixture.lineups[0].team.name)}
+    —
+                    ${translateTeam(data.fixture.lineups[1].team.name)}
                 </p>
 
                 <p>
