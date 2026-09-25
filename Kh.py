@@ -1083,12 +1083,14 @@ async function loadLive() {
 
     } catch (e) {
 
-        box.innerHTML =
-            '<div class="error">' +
-            "Erreur de connexion." +
-            "</div>";
+    document
+        .getElementById("list")
+        .innerHTML =
+        '<div class="error">' +
+        "Erreur : " + e.message +
+        "</div>";
 
-    }
+}
 
 }
 
