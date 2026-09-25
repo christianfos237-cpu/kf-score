@@ -768,13 +768,13 @@ sortLeagues(groups)
 
         <div class="league-info">
 
-            <div class="league-name">
-                ${g.name}
-            </div>
+        <div class="league-name">
+            ${translateLeague(g.name)}
+        </div>
 
-            <div class="league-country">
-                ${g.country}
-            </div>
+        <div class="league-country">
+            ${translateCountry(g.country)}
+        </div>
 
         </div>
 
@@ -846,6 +846,78 @@ async function livePage() {
 
 }
 
+function translateCountry(country) {
+
+    const countries = {
+        "England": "Angleterre",
+        "France": "France",
+        "Spain": "Espagne",
+        "Germany": "Allemagne",
+        "Italy": "Italie",
+        "Portugal": "Portugal",
+        "Netherlands": "Pays-Bas",
+        "Belgium": "Belgique",
+        "Brazil": "Brésil",
+        "Argentina": "Argentine",
+        "Cameroon": "Cameroun",
+        "United States": "États-Unis",
+        "Mexico": "Mexique",
+        "Saudi-Arabia": "Arabie saoudite",
+        "Saudi Arabia": "Arabie saoudite",
+        "Turkey": "Turquie",
+        "Scotland": "Écosse",
+        "Greece": "Grèce",
+        "Switzerland": "Suisse",
+        "Austria": "Autriche",
+        "Japan": "Japon",
+        "South Korea": "Corée du Sud",
+        "Australia": "Australie",
+        "China": "Chine",
+        "Morocco": "Maroc",
+        "Egypt": "Égypte",
+        "South Africa": "Afrique du Sud"
+    };
+
+    return countries[country] || country;
+}
+
+
+function translateLeague(league) {
+
+    const leagues = {
+        "UEFA Champions League": "Ligue des champions UEFA",
+        "UEFA Europa League": "Ligue Europa UEFA",
+        "UEFA Europa Conference League": "Ligue Conférence UEFA",
+        "Premier League": "Premier League",
+        "La Liga": "Liga",
+        "Serie A": "Serie A",
+        "Bundesliga": "Bundesliga",
+        "Ligue 1": "Ligue 1",
+        "Eredivisie": "Eredivisie",
+        "Primeira Liga": "Liga Portugal",
+        "Süper Lig": "Süper Lig",
+        "Brasileirão Serie A": "Brasileirão Série A",
+        "Saudi Pro League": "Championnat d'Arabie saoudite",
+        "Major League Soccer": "Major League Soccer",
+        "Botola Pro": "Botola Pro",
+        "Elite One": "Elite One Cameroun"
+    };
+
+    return leagues[league] || league;
+}
+
+
+function translateTeam(team) {
+
+    const teams = {
+        "Barcelona": "FC Barcelone",
+        "Atletico Madrid": "Atlético Madrid",
+        "Paris Saint Germain": "Paris Saint-Germain",
+        "Olympique Marseille": "Olympique de Marseille"
+    };
+
+    return teams[team] || team;
+}
 
 function countryFlag(country) {
 
@@ -986,11 +1058,11 @@ async function loadLive() {
                         <div class="league-info">
 
                             <div class="league-name">
-                                ${g.name}
+                                ${translateLeague(g.name)}
                             </div>
 
                             <div class="league-country">
-                                ${g.country}
+                                ${translateCountry(g.country)}
                             </div>
 
                         </div>
