@@ -438,7 +438,6 @@ main {
 
 
 <body>
-<div id="match-detail"></div>
 
 <header class="top-header">
     <div class="brand">
