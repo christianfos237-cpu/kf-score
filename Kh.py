@@ -109,12 +109,23 @@ def get_match_detail(match_id):
 
     if events_data:
         events = events_data.get("response", [])
+    stats_data, stats_error = api_get(
+    "fixtures/statistics",
+    {"fixture": match_id}
+)
 
+statistics = []
+
+if stats_data:
+    statistics = stats_data.get("response", [])
+    
     return jsonify({
-        "fixture": fixture,
-        "events": events,
-        "events_error": events_error
-    })
+    "fixture": fixture,
+    "events": events,
+    "events_error": events_error,
+    "statistics": statistics,
+    "statistics_error": stats_error
+})
         
 HTML = r"""
 <!doctype html>
