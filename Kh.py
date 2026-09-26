@@ -118,15 +118,15 @@ statistics = []
 
 if stats_data:
     statistics = stats_data.get("response", [])
-    
-    return jsonify({
+
+return jsonify({
     "fixture": fixture,
     "events": events,
     "events_error": events_error,
     "statistics": statistics,
     "statistics_error": stats_error
 })
-        
+
 HTML = r"""
 <!doctype html>
 
