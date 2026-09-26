@@ -43,7 +43,10 @@ def matches():
 
     data, error = api_get(
         "fixtures",
-        {"date": date}
+        {
+            "date": date,
+            "timezone": "Africa/Douala"
+        }
     )
 
     if error:
