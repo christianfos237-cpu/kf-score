@@ -41,7 +41,7 @@ def matches():
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
 
-    data, error = api_get(99
+    data, error = api_get(
         "fixtures",
         {"date": date}
     )
