@@ -233,77 +233,96 @@ main {
 
 .match {
     display: grid;
-    grid-template-columns: 1fr 70px 1fr;
+    grid-template-columns: 55px minmax(0, 1fr) 35px;
+    grid-template-rows: 1fr 1fr;
     align-items: center;
-    gap: 10px;
-    padding: 12px 10px;
+    min-height: 64px;
+    padding: 8px 10px;
     border-top: 1px solid #eee;
     cursor: pointer;
+    background: white;
 }
 
-.team {
-    display: grid;
-    grid-template-columns: 32px 1fr;
-    align-items: center;
-    gap: 5px;
-    min-width: 0;
-}
-
-.team span {
-    font-size: 13px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.team img {
-    width: 30px;
-    height: 30px;
-    object-fit: contain;
-}
-
-.away {
-    grid-template-columns: 1fr 38px;
-    justify-content: initial;
-    text-align: right;
-}
-
-.away span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.team {
+.match-time {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    align-self: stretch;
     display: flex;
+    flex-direction: column;
+    justify-content: center;
     align-items: center;
-    gap: 7px;
-}
-
-.away {
-    justify-content: flex-end;
-    text-align: right;
-}
-
-.team img {
-    width: 30px;
-    height: 30px;
-    object-fit: contain;
-}
-
-.score {
-    text-align: center;
+    font-size: 11px;
+    color: #666;
     font-weight: bold;
 }
 
-.status {
-    display: block;
-    font-size: 11px;
-    color: #666;
-    margin-top: 4px;
+.match-time .second-status {
+    margin-top: 8px;
 }
 
-.live {
+.match-teams {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.team-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 7px;
+}
+
+.team-row img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+    flex-shrink: 0;
+}
+
+.team-name {
+    font-size: 13px;
+    line-height: 18px;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    min-width: 0;
+}
+
+.match-scores {
+    grid-column: 3;
+    grid-row: 1 / 3;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 7px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.team-score {
+    height: 24px;
+    display: flex;
+    align-items: center;
+}
+
+.match-time-main {
+    font-size: 11px;
+    font-weight: bold;
+    color: #444;
+}
+
+.match-status {
+    font-size: 11px;
+    font-weight: bold;
+    color: #666;
+}
+
+.match-status.live {
     color: #e11d48;
 }
 
@@ -574,13 +593,93 @@ function status(f) {
     `;
 }
 
-
 function card(m) {
 
     const f = m.fixture;
     const t = m.teams;
     const g = m.goals;
 
+    const statusCode = f.status.short;
+
+    const kickoff = new Date(f.date);
+
+    const time = kickoff.toLocaleTimeString(
+        "fr-FR",
+        {
+            hour: "2-digit",
+            minute: "2-digit"
+        }
+    );
+
+    const date = kickoff.toLocaleDateString(
+        "fr-FR",
+        {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric"
+        }
+    );
+
+    let firstTime = time;
+    let secondTime = "-";
+
+    let homeScore = "";
+    let awayScore = "";
+
+    // MATCH À VENIR
+    if (statusCode === "NS") {
+
+        homeScore = "";
+        awayScore = "";
+
+        firstTime = time;
+        secondTime = "-";
+    }
+
+    // MATCH EN COURS
+    else if (
+        ["1H", "2H", "ET", "P", "LIVE"].includes(statusCode)
+    ) {
+
+        homeScore = g.home ?? 0;
+        awayScore = g.away ?? 0;
+
+        firstTime = time;
+        secondTime =
+            (f.status.elapsed || 0) + "'";
+    }
+
+    // MI-TEMPS
+    else if (statusCode === "HT") {
+
+        homeScore = g.home ?? 0;
+        awayScore = g.away ?? 0;
+
+        firstTime = time;
+        secondTime = "MT";
+    }
+
+    // MATCH TERMINÉ
+    else if (
+        ["FT", "AET", "PEN"].includes(statusCode)
+    ) {
+
+        homeScore = g.home ?? 0;
+        awayScore = g.away ?? 0;
+
+        firstTime = time;
+        secondTime = "FT";
+    }
+
+    // MATCH ANCIEN / AUTRE STATUT
+    else {
+
+        homeScore = g.home ?? 0;
+        awayScore = g.away ?? 0;
+
+        firstTime = date;
+        secondTime = "FT";
+    }
 
     return `
     <div
@@ -588,42 +687,70 @@ function card(m) {
         onclick="detailPage(${f.id})"
     >
 
-        <div class="team">
+        <div class="match-time">
 
-            <img src="${t.home.logo || ""}">
+            <span class="match-time-main">
+                ${firstTime}
+            </span>
 
-            <span>
-                ${translateTeam(t.home.name)}
+            <span class="match-status ${
+                ["1H", "2H", "ET", "P", "LIVE"].includes(statusCode)
+                ? "live"
+                : ""
+            } second-status">
+                ${secondTime}
             </span>
 
         </div>
 
 
-        <div class="score">
+        <div class="match-teams">
 
-            ${(g.home ?? "-")}
-            -
-            ${(g.away ?? "-")}
+            <div class="team-row">
 
-            ${status(f)}
+                <img
+                    src="${t.home.logo || ""}"
+                    alt=""
+                >
+
+                <span class="team-name">
+                    ${translateTeam(t.home.name)}
+                </span>
+
+            </div>
+
+
+            <div class="team-row">
+
+                <img
+                    src="${t.away.logo || ""}"
+                    alt=""
+                >
+
+                <span class="team-name">
+                    ${translateTeam(t.away.name)}
+                </span>
+
+            </div>
 
         </div>
 
 
-        <div class="team away">
+        <div class="match-scores">
 
-            <span>
-                ${translateTeam(t.away.name)}
+            <span class="team-score">
+                ${homeScore}
             </span>
 
-            <img src="${t.away.logo || ""}">
+            <span class="team-score">
+                ${awayScore}
+            </span>
 
         </div>
 
     </div>
     `;
 }
-
 
 async function datePage(date) {
 
