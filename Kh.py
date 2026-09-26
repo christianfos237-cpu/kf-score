@@ -243,13 +243,14 @@ main {
 
 .team {
     display: grid;
-    grid-template-columns: 38px 1fr;
+    grid-template-columns: 32px 1fr;
     align-items: center;
-    gap: 8px;
+    gap: 5px;
     min-width: 0;
 }
 
 .team span {
+    font-size: 13px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
