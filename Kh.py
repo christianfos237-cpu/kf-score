@@ -692,7 +692,7 @@ function card(m) {
         homeScore = g.home ?? 0;
         awayScore = g.away ?? 0;
 
-        firstTime = date;
+        firstTime = time;
         secondTime = "FT";
     }
 
@@ -709,7 +709,7 @@ function card(m) {
             </span>
 
             <span class="match-status ${
-                ["1H", "2H", "ET", "P", "LIVE"].includes(statusCode)
+                ["1H", "2H", "ET", "P", "LIVE", "HT"].includes(statusCode)
                 ? "live"
                 : ""
             } second-status">
