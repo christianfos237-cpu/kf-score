@@ -751,26 +751,58 @@ function card(m) {
         </div>
 
 
-        <div class="match-scores">
+            <div class="match-scores">
 
-    <span class="team-score ${
-        ["1H", "2H", "ET", "P", "LIVE", "HT"].includes(statusCode)
-        ? "match-score-live"
-        : ""
-    }">
-        ${homeScore}
-    </span>
+        <span class="team-score ${
+            ["1H", "2H", "ET", "P", "LIVE", "HT"].includes(statusCode)
+            ? "match-score-live"
+            : ""
+        }">
+            ${homeScore}
+        </span>
 
-    <span class="team-score ${
-        ["1H", "2H", "ET", "P", "LIVE", "HT"].includes(statusCode)
-        ? "match-score-live"
-        : ""
-    }">
-        ${awayScore}
-    </span>
+        <span class="team-score ${
+            ["1H", "2H", "ET", "P", "LIVE", "HT"].includes(statusCode)
+            ? "match-score-live"
+            : ""
+        }">
+            ${awayScore}
+        </span>
 
     </div>
+
+</div>
     `;
+}
+
+function dateLabel(dateString) {
+
+    const selected = new Date(dateString + "T12:00:00");
+
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+
+    const difference = Math.round(
+        (selected - today) / (1000 * 60 * 60 * 24)
+    );
+
+    if (difference === 0) {
+        return "Aujourd'hui";
+    }
+
+    if (difference === -1) {
+        return "Hier";
+    }
+
+    if (difference === 1) {
+        return "Demain";
+    }
+
+    return selected.toLocaleDateString("fr-FR", {
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+    });
 }
 
 async function datePage(date) {
@@ -878,6 +910,12 @@ groups[id] = {
 
 
             groups[id].ms.push(m);
+
+groups[id].ms.sort(
+    (a, b) =>
+        new Date(a.fixture.date) -
+        new Date(b.fixture.date)
+);
 
         });
 
@@ -1333,6 +1371,11 @@ async function loadLive() {
 
             groups[id].matches.push(m);
 
+groups[id].matches.sort(
+    (a, b) =>
+        new Date(a.fixture.date) -
+        new Date(b.fixture.date)
+);
         });
 
 
