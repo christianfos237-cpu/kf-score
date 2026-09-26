@@ -438,6 +438,7 @@ main {
 
 
 <body>
+<div id="match-detail"></div>
 
 <header class="top-header">
     <div class="brand">
@@ -1729,6 +1730,254 @@ setInterval(
     },
     60000
 );
+
+async function afficherCentreMatch(matchId) {
+
+    const zone = document.getElementById("match-detail");
+
+    if (!zone) {
+        console.log("Zone match-detail introuvable");
+        return;
+    }
+
+    zone.innerHTML = `
+        <div style="padding:20px;text-align:center;">
+            Chargement du match...
+        </div>
+    `;
+
+    try {
+
+        const response = await fetch(`/api/match/${matchId}`);
+        const data = await response.json();
+
+        if (data.error) {
+            zone.innerHTML = `
+                <div style="padding:20px;text-align:center;">
+                    ${data.error}
+                </div>
+            `;
+            return;
+        }
+
+        const fixture = data.fixture;
+        const events = data.events || [];
+        const statistics = data.statistics || [];
+
+        const home = fixture.teams.home;
+        const away = fixture.teams.away;
+
+        zone.innerHTML = `
+
+            <div class="match-center">
+
+                <div class="match-center-header">
+
+                    <div class="match-team">
+                        <img src="${home.logo || ""}" alt="">
+                        <strong>${translateTeam(home.name)}</strong>
+                    </div>
+
+                    <div class="match-center-score">
+                        <div>
+                            ${fixture.goals.home ?? 0}
+                            -
+                            ${fixture.goals.away ?? 0}
+                        </div>
+                        <small>${fixture.fixture.status.short}</small>
+                    </div>
+
+                    <div class="match-team">
+                        <img src="${away.logo || ""}" alt="">
+                        <strong>${translateTeam(away.name)}</strong>
+                    </div>
+
+                </div>
+
+                <div class="match-tabs">
+
+                    <button onclick="afficherOngletMatch('resume', ${matchId})">
+                        RÉSUMÉ
+                    </button>
+
+                    <button onclick="afficherOngletMatch('stats', ${matchId})">
+                        STATS
+                    </button>
+
+                    <button onclick="afficherOngletMatch('compositions', ${matchId})">
+                        COMPOSITIONS
+                    </button>
+
+                    <button onclick="afficherOngletMatch('classement', ${matchId})">
+                        CLASSEMENT
+                    </button>
+
+                </div>
+
+                <div id="contenu-match">
+                    ${afficherResumeMatch(events)}
+                </div>
+
+            </div>
+        `;
+
+        window.matchActuel = data;
+
+    } catch (error) {
+
+        zone.innerHTML = `
+            <div style="padding:20px;text-align:center;">
+                Erreur lors du chargement du match.
+            </div>
+        `;
+    }
+}
+
+
+function afficherOngletMatch(onglet, matchId) {
+
+    const data = window.matchActuel;
+
+    if (!data) return;
+
+    const contenu = document.getElementById("contenu-match");
+
+    if (onglet === "resume") {
+        contenu.innerHTML = afficherResumeMatch(data.events || []);
+    }
+
+    if (onglet === "stats") {
+        contenu.innerHTML = afficherStatsMatch(data.statistics || []);
+    }
+
+    if (onglet === "compositions") {
+        contenu.innerHTML = afficherCompositionsMatch(data);
+    }
+
+    if (onglet === "classement") {
+        contenu.innerHTML = `
+            <div style="padding:20px;text-align:center;">
+                Classement disponible lorsque les données de classement sont récupérées.
+            </div>
+        `;
+    }
+}
+
+
+function afficherResumeMatch(events) {
+
+    if (!events.length) {
+        return `
+            <div style="padding:20px;text-align:center;">
+                Aucun événement.
+            </div>
+        `;
+    }
+
+    return `
+        <div class="match-events">
+
+            ${events.map(event => `
+
+                <div style="
+                    padding:10px;
+                    border-bottom:1px solid #eee;
+                ">
+
+                    <strong>${event.time?.elapsed || ""}'</strong>
+
+                    ${event.type === "Goal" ? "⚽" : ""}
+                    ${event.type === "Card" ? "🟨" : ""}
+                    ${event.type === "subst" ? "🔄" : ""}
+
+                    ${event.player?.name || ""}
+
+                    ${event.assist?.name
+                        ? ` — Passe : ${event.assist.name}`
+                        : ""
+                    }
+
+                </div>
+
+            `).join("")}
+
+        </div>
+    `;
+}
+
+
+function afficherStatsMatch(statistics) {
+
+    if (!statistics.length) {
+        return `
+            <div style="padding:20px;text-align:center;">
+                Aucune statistique disponible.
+            </div>
+        `;
+    }
+
+    return `
+        <div style="padding:15px;">
+
+            ${statistics.map(team => `
+
+                <div style="
+                    display:flex;
+                    align-items:center;
+                    gap:10px;
+                    margin-bottom:15px;
+                ">
+
+                    <img
+                        src="${team.team?.logo || ""}"
+                        width="30"
+                    >
+
+                    <strong>
+                        ${translateTeam(team.team?.name || "")}
+                    </strong>
+
+                </div>
+
+                ${(team.statistics || []).map(stat => `
+
+                    <div style="
+                        display:flex;
+                        justify-content:space-between;
+                        padding:8px 0;
+                        border-bottom:1px solid #eee;
+                    ">
+
+                        <span>${stat.type}</span>
+
+                        <strong>${stat.value ?? "-"}</strong>
+
+                    </div>
+
+                `).join("")}
+
+            `).join("")}
+
+        </div>
+    `;
+}
+
+
+function afficherCompositionsMatch(data) {
+
+    return `
+        <div style="padding:15px;">
+
+            <h3>COMPOSITIONS</h3>
+
+            <p>
+                Les compositions détaillées seront affichées ici
+                à partir des données de l'API.
+            </p>
+
+        </div>
+    `;
+}
 
 </script>
 
