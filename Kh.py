@@ -41,7 +41,7 @@ def matches():
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
 
-    data, error = api_get(
+    data, error = api_get(99
         "fixtures",
         {"date": date}
     )
@@ -171,6 +171,17 @@ main {
     display: flex;
     gap: 6px;
     margin-bottom: 12px;
+}
+
+.date-display {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: white;
+    font-weight: bold;
+    text-align: center;
+    font-size: 14px;
 }
 
 .tools > * {
@@ -323,6 +334,10 @@ main {
 }
 
 .match-status.live {
+    color: #e11d48;
+}
+
+.match-score-live {
     color: #e11d48;
 }
 
@@ -738,15 +753,21 @@ function card(m) {
 
         <div class="match-scores">
 
-            <span class="team-score">
-                ${homeScore}
-            </span>
+    <span class="team-score ${
+        ["1H", "2H", "ET", "P", "LIVE", "HT"].includes(statusCode)
+        ? "match-score-live"
+        : ""
+    }">
+        ${homeScore}
+    </span>
 
-            <span class="team-score">
-                ${awayScore}
-            </span>
-
-        </div>
+    <span class="team-score ${
+        ["1H", "2H", "ET", "P", "LIVE", "HT"].includes(statusCode)
+        ? "match-score-live"
+        : ""
+    }">
+        ${awayScore}
+    </span>
 
     </div>
     `;
@@ -764,28 +785,27 @@ async function datePage(date) {
         .slice(0, 10);
 
     app.innerHTML = `
+<div class="tools">
+    <button onclick="moveDate(-1)">◀</button>
 
-    <div class="tools">
+    <button
+        id="dateDisplay"
+        class="date-display"
+        onclick="document.getElementById('picker').showPicker()"
+    >
+        ${dateLabel(d)}
+    </button>
 
-        <button onclick="moveDate(-1)">
-        ◀
-        </button>
+    <input
+        id="picker"
+        type="date"
+        value="${d}"
+        onchange="datePage(this.value)"
+        style="display:none;"
+    >
 
-
-        <input
-            id="picker"
-            type="date"
-            value="${d}"
-            onchange="datePage(this.value)"
-        >
-
-
-        <button onclick="moveDate(1)">
-        ▶
-        </button>
-
-    </div>
-
+    <button onclick="moveDate(1)">▶</button>
+</div>
 
     <div
         id="list"
