@@ -119,13 +119,32 @@ def get_match_detail(match_id):
 
     if stats_data:
         statistics = stats_data.get("response", [])
+    
+    # CLASSEMENT
+    standings = []
 
+    league_id = fixture["league"]["id"]
+    season = fixture["league"]["season"]
+
+    standings_data, standings_error = api_get(
+        "standings",
+        {
+            "league": league_id,
+            "season": season
+        }
+    )
+
+    if standings_data:
+        standings = standings_data.get("response", [])
+        
     return jsonify({
         "fixture": fixture,
         "events": events,
         "events_error": events_error,
         "statistics": statistics,
-        "statistics_error": stats_error
+        "statistics_error": stats_error,
+        "standings": standings,
+        "standings_error": standings_error
     })
     
 HTML = r"""
