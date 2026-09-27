@@ -4,7 +4,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-API_KEY = "5b97f3ad0d8b14f79e693fdf1d1181ce"
+API_KEY = "b8ced9a752303393b1eb940f6f186314"
 API_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
