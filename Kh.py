@@ -1592,14 +1592,63 @@ groups[id].matches.sort(
 async function detailPage(id) {
 
     app.innerHTML = `
-        <div id="match-detail">
-            <div class="box" style="text-align:center;padding:20px;">
-                Chargement du match...
-            </div>
+        <div class="box">
+            Chargement...
         </div>
     `;
 
-    await afficherCentreMatch(id);
+    try {
+
+        const r = await fetch("/api/match/" + id);
+
+        const data = await r.json();
+
+        console.log(data);
+
+        if (!r.ok) {
+            throw new Error(data.error || "Erreur serveur");
+        }
+
+        app.innerHTML = `
+            <button class="back" onclick="datePage()">
+                ← Retour
+            </button>
+
+            <div class="box">
+                <h2>Match chargé ✅</h2>
+
+                <p>ID : ${id}</p>
+
+                <p>
+                    Ligue :
+                    ${data.fixture.league.name}
+                </p>
+
+                <p>
+                    ${translateTeam(data.fixture.teams.home.name)}
+                    —
+                    ${translateTeam(data.fixture.teams.away.name)}
+                </p>
+
+                <p>
+                    Score :
+                    ${data.fixture.goals.home}
+                    -
+                    ${data.fixture.goals.away}
+                </p>
+            </div>
+        `;
+
+    } catch (e) {
+
+        console.error("ERREUR :", e);
+
+        app.innerHTML = `
+            <div class="error">
+                Erreur : ${e.message}
+            </div>
+        `;
+    }
 }
 
 function eventHtml(e) {
