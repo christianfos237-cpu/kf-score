@@ -119,6 +119,17 @@ def get_match_detail(match_id):
 
     if stats_data:
         statistics = stats_data.get("response", [])
+
+    # COMPOSITIONS
+    lineups_data, lineups_error = api_get(
+        "fixtures/lineups",
+        {"fixture": match_id}
+    )
+
+    lineups = []
+
+    if lineups_data:
+        lineups = lineups_data.get("response", [])
     
     # CLASSEMENT
     standings = []
@@ -143,6 +154,8 @@ def get_match_detail(match_id):
         "events_error": events_error,
         "statistics": statistics,
         "statistics_error": stats_error,
+        "lineups": lineups,
+        "lineups_error": lineups_error,
         "standings": standings,
         "standings_error": standings_error
     })
