@@ -1606,7 +1606,7 @@ async function detailPage(id) {
 
     app.innerHTML = `
         <div class="box">
-            Chargement...
+            Chargement du match...
         </div>
     `;
 
@@ -1616,52 +1616,214 @@ async function detailPage(id) {
 
         const data = await r.json();
 
-        console.log(data);
+        console.log("DONNÉES MATCH :", data);
 
-        if (!r.ok) {
-            throw new Error(data.error || "Erreur serveur");
+        if (!r.ok || data.error) {
+            throw new Error(
+                data.error || "Erreur serveur"
+            );
         }
 
+        window.matchActuel = data;
+
+        const fixture = data.fixture;
+
+        const home = fixture.teams.home;
+        const away = fixture.teams.away;
+
         app.innerHTML = `
-            <button class="back" onclick="datePage()">
+
+            <button
+                class="back"
+                onclick="datePage()"
+            >
                 ← Retour
             </button>
 
-            <div class="box">
-                <h2>Match chargé ✅</h2>
+            <div class="match-center">
 
-                <p>ID : ${id}</p>
+                <!-- COMPÉTITION -->
 
-                <p>
-                    Ligue :
-                    ${data.fixture.league.name}
-                </p>
+                <div class="match-league">
 
-                <p>
-                    ${translateTeam(data.fixture.teams.home.name)}
-                    —
-                    ${translateTeam(data.fixture.teams.away.name)}
-                </p>
+                    ${
+                        fixture.league.logo
+                        ? `
+                        <img
+                            src="${fixture.league.logo}"
+                            alt=""
+                        >
+                        `
+                        : ""
+                    }
 
-                <p>
-                    Score :
-                    ${data.fixture.goals.home}
-                    -
-                    ${data.fixture.goals.away}
-                </p>
+                    <span>
+                        ${countryFlag(
+                            fixture.league.country
+                        )}
+                    </span>
+
+                    <strong>
+                        ${translateLeague(
+                            fixture.league.name
+                        )}
+                    </strong>
+
+                </div>
+
+
+                <!-- ÉQUIPES + SCORE -->
+
+                <div class="match-center-header">
+
+                    <div class="match-team">
+
+                        <img
+                            src="${home.logo || ""}"
+                            alt=""
+                        >
+
+                        <strong>
+                            ${translateTeam(home.name)}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="match-center-score">
+
+                        <div class="big">
+
+                            ${fixture.goals.home ?? 0}
+
+                            -
+
+                            ${fixture.goals.away ?? 0}
+
+                        </div>
+
+                        <small>
+                            ${fixture.fixture.status.long}
+                        </small>
+
+                    </div>
+
+
+                    <div class="match-team">
+
+                        <img
+                            src="${away.logo || ""}"
+                            alt=""
+                        >
+
+                        <strong>
+                            ${translateTeam(away.name)}
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <!-- ONGLETS -->
+
+                <div class="match-tabs">
+
+                    <button
+                        class="match-tab active"
+                        onclick="
+                            afficherOngletMatch(
+                                'resume',
+                                ${id}
+                            )
+                        "
+                    >
+                        RÉSUMÉ
+                    </button>
+
+
+                    <button
+                        class="match-tab"
+                        onclick="
+                            afficherOngletMatch(
+                                'stats',
+                                ${id}
+                            )
+                        "
+                    >
+                        STATS
+                    </button>
+
+
+                    <button
+                        class="match-tab"
+                        onclick="
+                            afficherOngletMatch(
+                                'compositions',
+                                ${id}
+                            )
+                        "
+                    >
+                        COMPOSITIONS
+                    </button>
+
+
+                    <button
+                        class="match-tab"
+                        onclick="
+                            afficherOngletMatch(
+                                'classement',
+                                ${id}
+                            )
+                        "
+                    >
+                        CLASSEMENT
+                    </button>
+
+                </div>
+
+
+                <!-- CONTENU -->
+
+                <div id="contenu-match">
+
+                    ${afficherResumeMatch(
+                        data.events || []
+                    )}
+
+                </div>
+
             </div>
+
         `;
 
     } catch (e) {
 
-        console.error("ERREUR :", e);
+        console.error(
+            "ERREUR MATCH :",
+            e
+        );
 
         app.innerHTML = `
+
+            <button
+                class="back"
+                onclick="datePage()"
+            >
+                ← Retour
+            </button>
+
             <div class="error">
-                Erreur : ${e.message}
+
+                Erreur :
+                ${e.message}
+
             </div>
+
         `;
+
     }
+
 }
 
 function eventHtml(e) {
