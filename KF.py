@@ -4,6 +4,30 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+API_KEY = "40d472a966424dab0102cd2cbf84a177"
+API_URL = "https://v3.football.api-sports.io"
+HEADERS = {"x-apisports-key": API_KEY}
+
+
+def api_get(endpoint, params):
+    try:
+        r = requests.get(
+            API_URL + "/" + endpoint,
+            headers=HEADERS,
+            params=params,
+            timeout=20
+        )
+
+        data = r.json()
+
+        if r.status_code != 200:
+            return None, "Erreur API : " + str(r.status_code)
+
+        return data, None
+
+    except Exception as e:
+        return None, "Erreur : " + str(e)
+
 
 @app.route("/")
 def home():
@@ -17,53 +41,27 @@ def matches():
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
 
-    BSD_API_KEY = "b1d7a96d7c99e84b1181676788a2ed2381eb3fd8"
+    data, error = api_get(
+        "fixtures",
+        {
+            "date": date,
+            "timezone": "Africa/Douala"
+        }
+    )
 
-    url = "https://sports.bzzoiro.com/api/v2/events/"
-
-    headers = {
-        "Authorization": "Token " + BSD_API_KEY
-    }
-
-    try:
-
-        r = requests.get(
-            url,
-            headers=headers,
-            params={
-                "date_from": date,
-                "date_to": date,
-                "limit": 200,
-                "offset": 0
-            },
-            timeout=20
-        )
-
-        if r.status_code != 200:
-
-            return jsonify({
-                "error": "Erreur BSD",
-                "status_code": r.status_code,
-                "details": r.text[:1000]
-            }), r.status_code
-
-        data = r.json()
-
+    if error:
         return jsonify({
-    "date_demandee": date,
-    "nombre_matchs": len(data.get("results", [])),
-    "total_bsd": data.get("count"),
-    "next": data.get("next"),
-    "previous": data.get("previous"),
-    "response": data.get("results", [])
-})
-
-    except Exception as e:
-
-        return jsonify({
-            "error": str(e)
+            "error": error
         }), 500
-        
+
+    return jsonify({
+        "date_demandee": date,
+        "nombre_matchs": len(data.get("response", [])),
+        "api_results": data.get("results"),
+        "api_errors": data.get("errors"),
+        "response": data.get("response", [])
+    })
+    
 @app.route("/api/live")
 def live():
 
