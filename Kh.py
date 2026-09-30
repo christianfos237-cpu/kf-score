@@ -26,10 +26,13 @@ def matches():
     }
 
     try:
+
         r = requests.get(
             url,
             headers=headers,
             params={
+                "date_from": date,
+                "date_to": date,
                 "limit": 200,
                 "offset": 0
             },
@@ -37,6 +40,7 @@ def matches():
         )
 
         if r.status_code != 200:
+
             return jsonify({
                 "error": "Erreur BSD",
                 "status_code": r.status_code,
@@ -45,19 +49,10 @@ def matches():
 
         data = r.json()
 
-        matchs = []
-
-        for match in data.get("results", []):
-
-            event_date = match.get("event_date", "")
-
-            if event_date.startswith(date):
-                matchs.append(match)
-
         return jsonify({
             "date_demandee": date,
-            "nombre_matchs": len(matchs),
-            "response": matchs
+            "nombre_matchs": len(data.get("results", [])),
+            "response": data.get("results", [])
         })
 
     except Exception as e:
