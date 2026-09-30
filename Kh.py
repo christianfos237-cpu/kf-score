@@ -41,27 +41,55 @@ def matches():
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
 
-    data, error = api_get(
-        "fixtures",
-        {
-            "date": date,
-            "timezone": "Africa/Douala"
-        }
-    )
+    BSD_API_KEY = "8f3dd870c4ec45ae4465353437d821082d563e8d"
 
-    if error:
+    url = "https://sports.bzzoiro.com/api/v2/events/"
+
+    headers = {
+        "Authorization": "Token " + BSD_API_KEY
+    }
+
+    try:
+        r = requests.get(
+            url,
+            headers=headers,
+            params={
+                "limit": 200,
+                "offset": 0
+            },
+            timeout=20
+        )
+
+        if r.status_code != 200:
+            return jsonify({
+                "error": "Erreur BSD",
+                "status_code": r.status_code,
+                "details": r.text[:1000]
+            }), r.status_code
+
+        data = r.json()
+
+        matchs = []
+
+        for match in data.get("results", []):
+
+            event_date = match.get("event_date", "")
+
+            if event_date.startswith(date):
+
+                matchs.append(match)
+
         return jsonify({
-            "error": error
-        }), 500
+            "date_demandee": date,
+            "nombre_matchs": len(matchs),
+            "response": matchs
+        })
 
-    return jsonify({
-        "date_demandee": date,
-        "nombre_matchs": len(data.get("response", [])),
-        "api_results": data.get("results"),
-        "api_errors": data.get("errors"),
-        "response": data.get("response", [])
-    })
-    
+    except Exception as e:
+
+        return jsonify({
+            "error": str(e)
+        }), 500
 @app.route("/api/live")
 def live():
 
