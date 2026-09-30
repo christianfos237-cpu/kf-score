@@ -4,30 +4,6 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-API_KEY = "40d472a966424dab0102cd2cbf84a177"
-API_URL = "https://v3.football.api-sports.io"
-HEADERS = {"x-apisports-key": API_KEY}
-
-
-def api_get(endpoint, params):
-    try:
-        r = requests.get(
-            API_URL + "/" + endpoint,
-            headers=HEADERS,
-            params=params,
-            timeout=20
-        )
-
-        data = r.json()
-
-        if r.status_code != 200:
-            return None, "Erreur API : " + str(r.status_code)
-
-        return data, None
-
-    except Exception as e:
-        return None, "Erreur : " + str(e)
-
 
 @app.route("/")
 def home():
@@ -76,7 +52,6 @@ def matches():
             event_date = match.get("event_date", "")
 
             if event_date.startswith(date):
-
                 matchs.append(match)
 
         return jsonify({
@@ -90,6 +65,7 @@ def matches():
         return jsonify({
             "error": str(e)
         }), 500
+        
 @app.route("/api/live")
 def live():
 
