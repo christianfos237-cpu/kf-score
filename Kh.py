@@ -2181,7 +2181,7 @@ function afficherCompositionsMatch(data) {
 @app.route("/api/test-bsd")
 def test_bsd():
 
-    BSD_API_KEY = "8f3dd870c4ec45ae4465353437d821082d563e8d"
+    BSD_API_KEY = "a05deaaaf3faeb97675d00a21675ac730b46da31"
 
     url = "https://sports.bzzoiro.com/api/v2/events/"
 
