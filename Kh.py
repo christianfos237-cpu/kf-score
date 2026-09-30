@@ -2201,9 +2201,10 @@ def test_bsd():
         )
 
         return jsonify({
-            "status_code": r.status_code,
-            "data": r.json()
-        })
+    "status_code": r.status_code,
+    "content_type": r.headers.get("Content-Type"),
+    "response_text": r.text[:2000]
+})
 
     except Exception as e:
         return jsonify({
