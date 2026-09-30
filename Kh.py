@@ -2181,9 +2181,9 @@ function afficherCompositionsMatch(data) {
 @app.route("/api/test-bsd")
 def test_bsd():
 
-    BSD_API_KEY = "b3966e483b93393ab80a7af4358504302866c790"
+    BSD_API_KEY = "8f3dd870c4ec45ae4465353437d821082d563e8d"
 
-    url = "https://sports.bzzoiro.com/football/api/v2/matches/"
+    url = "https://sports.bzzoiro.com/api/v2/events/"
 
     headers = {
         "Authorization": "Token " + BSD_API_KEY
@@ -2201,16 +2201,17 @@ def test_bsd():
         )
 
         return jsonify({
-    "status_code": r.status_code,
-    "content_type": r.headers.get("Content-Type"),
-    "response_text": r.text[:2000]
-})
+            "status_code": r.status_code,
+            "content_type": r.headers.get("Content-Type"),
+            "data": r.json()
+        })
 
     except Exception as e:
         return jsonify({
+            "status_code": r.status_code if 'r' in locals() else None,
+            "response_text": r.text[:2000] if 'r' in locals() else "",
             "error": str(e)
         }), 500
-
 
 if __name__ == "__main__":
     
