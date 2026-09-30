@@ -2211,6 +2211,39 @@ def test_bsd():
         return jsonify({
             "error": str(e)
         }), 500
+        @app.route("/api/test-leagues")
+def test_leagues():
+
+    BSD_API_KEY = "b1d7a96d7c99e84b1181676788a2ed2381eb3fd8"
+
+    url = "https://sports.bzzoiro.com/api/v2/leagues/"
+
+    headers = {
+        "Authorization": "Token " + BSD_API_KEY
+    }
+
+    try:
+
+        r = requests.get(
+            url,
+            headers=headers,
+            params={
+                "limit": 5,
+                "offset": 0
+            },
+            timeout=20
+        )
+
+        return jsonify({
+            "status_code": r.status_code,
+            "response_text": r.text[:5000]
+        })
+
+    except Exception as e:
+
+        return jsonify({
+            "error": str(e)
+        }), 500
 if __name__ == "__main__":
     
     app.run(
