@@ -2178,6 +2178,35 @@ function afficherCompositionsMatch(data) {
 </html>
 """
 
+# TEST TEMPORAIRE DE L'API
+@app.route("/test-api")
+def test_api():
+    try:
+        import requests
+        import os
+
+        api_key = os.environ.get("API_KEY")
+
+        if not api_key:
+            return {"erreur": "API_KEY non configurée"}, 500
+
+        response = requests.get(
+            "https://v3.football.api-sports.io/fixtures",
+            headers={"x-apisports-key": api_key},
+            params={"date": "2026-09-30"},
+            timeout=20
+        )
+
+        data = response.json()
+
+        return {
+            "http_status": response.status_code,
+            "api_errors": data.get("errors"),
+            "nombre_de_matchs": len(data.get("response", []))
+        }
+
+    except Exception as e:
+        return {"erreur": str(e)}, 500
 
 if __name__ == "__main__":
 
