@@ -2178,9 +2178,41 @@ function afficherCompositionsMatch(data) {
 </html>
 """
 
+@app.route("/api/test-bsd")
+def test_bsd():
+
+    BSD_API_KEY = "b3966e483b93393ab80a7af4358504302866c790"
+
+    url = "https://sports.bzzoiro.com/football/api/v2/matches/"
+
+    headers = {
+        "Authorization": "Token " + BSD_API_KEY
+    }
+
+    try:
+        r = requests.get(
+            url,
+            headers=headers,
+            params={
+                "limit": 5,
+                "offset": 0
+            },
+            timeout=20
+        )
+
+        return jsonify({
+            "status_code": r.status_code,
+            "data": r.json()
+        })
+
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
+
 
 if __name__ == "__main__":
-
+    
     app.run(
         host="127.0.0.1",
         port=5000,
