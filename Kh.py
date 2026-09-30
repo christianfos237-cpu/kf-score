@@ -17,7 +17,7 @@ def matches():
     if not date:
         date = datetime.now().strftime("%Y-%m-%d")
 
-    BSD_API_KEY = "8f3dd870c4ec45ae4465353437d821082d563e8d"
+    BSD_API_KEY = "b1d7a96d7c99e84b1181676788a2ed2381eb3fd8"
 
     url = "https://sports.bzzoiro.com/api/v2/events/"
 
@@ -2185,7 +2185,7 @@ function afficherCompositionsMatch(data) {
 @app.route("/api/test-bsd")
 def test_bsd():
 
-    BSD_API_KEY = "a05deaaaf3faeb97675d00a21675ac730b46da31"
+    BSD_API_KEY = "b1d7a96d7c99e84b1181676788a2ed2381eb3fd8"
 
     url = "https://sports.bzzoiro.com/api/v2/events/"
 
