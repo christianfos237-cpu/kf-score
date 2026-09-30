@@ -50,10 +50,13 @@ def matches():
         data = r.json()
 
         return jsonify({
-            "date_demandee": date,
-            "nombre_matchs": len(data.get("results", [])),
-            "response": data.get("results", [])
-        })
+    "date_demandee": date,
+    "nombre_matchs": len(data.get("results", [])),
+    "total_bsd": data.get("count"),
+    "next": data.get("next"),
+    "previous": data.get("previous"),
+    "response": data.get("results", [])
+})
 
     except Exception as e:
 
