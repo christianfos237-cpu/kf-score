@@ -464,6 +464,48 @@ main {
     letter-spacing: 1px;
 }
 
+/* ONGLET DE LA PAGE DÉTAIL DU MATCH */
+
+.match-tabs {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    padding: 10px 4px;
+    margin-top: 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+
+    scrollbar-width: none;
+}
+
+.match-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.match-tab {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: #999;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: 0.2s;
+}
+
+.match-tab.active {
+    color: #fff;
+    background: rgba(255,255,255,0.08);
+}
+
 </style>
 
 </head>
@@ -1756,29 +1798,42 @@ async function detailPage(id) {
 
 
                     <button
-                        class="match-tab"
-                        onclick="
-                            afficherOngletMatch(
-                                'compositions',
-                                ${id}
-                            )
-                        "
-                    >
-                        COMPOSITIONS
-                    </button>
+    class="match-tab"
+    onclick="
+        afficherOngletMatch(
+            'compositions',
+            ${id}
+        )
+    "
+>
+    COMPOSITIONS
+</button>
 
 
-                    <button
-                        class="match-tab"
-                        onclick="
-                            afficherOngletMatch(
-                                'classement',
-                                ${id}
-                            )
-                        "
-                    >
-                        CLASSEMENT
-                    </button>
+<button
+    class="match-tab"
+    onclick="
+        afficherOngletMatch(
+            'details',
+            ${id}
+        )
+    "
+>
+    DÉTAILS
+</button>
+
+
+<button
+    class="match-tab"
+    onclick="
+        afficherOngletMatch(
+            'classement',
+            ${id}
+        )
+    "
+>
+    CLASSEMENT
+</button>
 
                 </div>
 
