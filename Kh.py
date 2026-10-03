@@ -506,6 +506,313 @@ main {
     background: rgba(255,255,255,0.08);
 }
 
+/* =========================================
+   PAGE DÉTAIL DU MATCH
+   ========================================= */
+
+.match-detail-page {
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+
+/* BOUTON RETOUR */
+
+.match-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: #aaa;
+    font-size: 14px;
+    font-weight: 700;
+    padding: 8px 0;
+    margin-bottom: 10px;
+    cursor: pointer;
+}
+
+.match-back-button:hover {
+    color: white;
+}
+
+
+/* CARTE PRINCIPALE */
+
+.match-main-card {
+    background: linear-gradient(
+        145deg,
+        #151515,
+        #0d0d0d
+    );
+
+    border: 1px solid #242424;
+    border-radius: 20px;
+    padding: 20px 14px;
+    box-sizing: border-box;
+
+    box-shadow:
+        0 8px 30px rgba(0,0,0,0.35);
+}
+
+
+/* COMPÉTITION */
+
+.match-competition {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 25px;
+    text-align: center;
+}
+
+.competition-logo {
+    width: 36px;
+    height: 36px;
+    object-fit: contain;
+}
+
+.competition-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.competition-name {
+    color: white;
+    font-size: 15px;
+    font-weight: 800;
+}
+
+.competition-country {
+    color: #888;
+    font-size: 12px;
+    margin-top: 3px;
+}
+
+
+/* ÉQUIPES */
+
+.match-teams {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 15px;
+}
+
+
+/* ÉQUIPE */
+
+.detail-team {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    text-align: center;
+}
+
+.detail-team-logo {
+    width: 68px;
+    height: 68px;
+    object-fit: contain;
+    margin-bottom: 10px;
+}
+
+.detail-team-name {
+    color: white;
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+
+/* SCORE */
+
+.detail-score-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 90px;
+}
+
+.detail-score {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+
+    color: white;
+    font-size: 36px;
+    font-weight: 900;
+    line-height: 1;
+}
+
+.score-separator {
+    color: #777;
+    font-weight: 500;
+}
+
+.detail-status {
+    margin-top: 10px;
+    padding: 5px 10px;
+
+    border-radius: 20px;
+
+    background: rgba(255,255,255,0.08);
+    color: #bbb;
+
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+
+    white-space: nowrap;
+}
+
+
+/* INFOS RAPIDES */
+
+.match-quick-info {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+
+    margin-top: 22px;
+    padding-top: 15px;
+
+    border-top: 1px solid #222;
+
+    color: #888;
+    font-size: 11px;
+}
+
+.match-quick-info span {
+    background: #171717;
+    border: 1px solid #252525;
+    border-radius: 20px;
+    padding: 6px 10px;
+}
+
+
+/* CONTENU */
+
+.match-content {
+    margin-top: 15px;
+}
+
+
+/* CHARGEMENT */
+
+.match-loading {
+    min-height: 250px;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+
+    gap: 12px;
+
+    color: #aaa;
+    font-size: 14px;
+}
+
+.loading-spinner {
+    width: 30px;
+    height: 30px;
+
+    border: 3px solid #333;
+    border-top-color: white;
+    border-radius: 50%;
+
+    animation: matchSpin 0.8s linear infinite;
+}
+
+@keyframes matchSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+
+/* ERREUR */
+
+.match-error-page {
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 15px;
+    box-sizing: border-box;
+}
+
+
+/* VERSION MOBILE */
+
+@media (max-width: 600px) {
+
+    .match-detail-page {
+        padding: 8px;
+    }
+
+    .match-main-card {
+        border-radius: 16px;
+        padding: 18px 10px;
+    }
+
+    .match-competition {
+        margin-bottom: 20px;
+    }
+
+    .competition-logo {
+        width: 32px;
+        height: 32px;
+    }
+
+    .competition-name {
+        font-size: 14px;
+    }
+
+    .match-teams {
+        gap: 7px;
+    }
+
+    .detail-team-logo {
+        width: 55px;
+        height: 55px;
+    }
+
+    .detail-team-name {
+        font-size: 13px;
+    }
+
+    .detail-score-area {
+        min-width: 75px;
+    }
+
+    .detail-score {
+        font-size: 30px;
+        gap: 5px;
+    }
+
+    .detail-status {
+        font-size: 9px;
+        padding: 4px 7px;
+    }
+
+    .match-quick-info {
+        font-size: 10px;
+    }
+
+}
+
 </style>
 
 </head>
