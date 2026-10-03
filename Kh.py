@@ -854,23 +854,22 @@ main {
 
 .match-main-card {
     width: 100%;
-    max-width: 100%;
+    max-width: none;
     box-sizing: border-box;
-    overflow: hidden;
+    margin-left: 0;
+    margin-right: 0;
 }
 
 .detail-match-teams {
     width: 100%;
-    max-width: 100%;
     box-sizing: border-box;
 
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    grid-template-rows: auto auto;
-    align-items: center;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: start;
+    gap: 8px;
 
-    gap: 10px;
-    padding: 15px 10px;
+    padding: 15px 8px;
 }
 
 .detail-team {
@@ -878,26 +877,20 @@ main {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
     text-align: center;
 }
 
 .detail-team-logo {
-    width: 55px;
-    height: 55px;
+    width: 50px;
+    height: 50px;
     object-fit: contain;
-    flex-shrink: 0;
 }
 
 .detail-team-name {
-    width: 100%;
-    margin-top: 7px;
-
+    margin-top: 6px;
     font-size: 14px;
-    font-weight: bold;
     line-height: 18px;
-
-    white-space: normal;
+    text-align: center;
     overflow-wrap: anywhere;
 }
 
@@ -906,28 +899,22 @@ main {
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    min-width: 75px;
 }
 
 .detail-score {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 10px;
-
-    font-size: 26px;
+    gap: 8px;
+    font-size: 24px;
     font-weight: bold;
     white-space: nowrap;
-}
-
-.score-separator {
-    font-weight: normal;
 }
 
 .detail-status {
     margin-top: 5px;
     font-size: 12px;
     font-weight: bold;
-    text-align: center;
 }
 
 /* BUTEURS */
