@@ -597,7 +597,7 @@ main {
 
 /* ÉQUIPES */
 
-.match-teams {
+.detail-match-teams {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
@@ -2044,7 +2044,7 @@ async function detailPage(id) {
 
                     <!-- ÉQUIPES -->
 
-                    <div class="match-teams">
+                    <div class="detail-match-teams">
 
                         <!-- ÉQUIPE DOMICILE -->
 
