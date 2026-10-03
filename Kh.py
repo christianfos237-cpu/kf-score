@@ -848,6 +848,119 @@ main {
     text-align: left;
 }
 
+/* ============================= */
+/* CORRECTION PAGE MATCH */
+/* ============================= */
+
+.match-main-card {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.detail-match-teams {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+
+    gap: 10px;
+    padding: 15px 10px;
+}
+
+.detail-team {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.detail-team-logo {
+    width: 55px;
+    height: 55px;
+    object-fit: contain;
+    flex-shrink: 0;
+}
+
+.detail-team-name {
+    width: 100%;
+    margin-top: 7px;
+
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 18px;
+
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.detail-score-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.detail-score {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+
+    font-size: 26px;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.score-separator {
+    font-weight: normal;
+}
+
+.detail-status {
+    margin-top: 5px;
+    font-size: 12px;
+    font-weight: bold;
+    text-align: center;
+}
+
+/* BUTEURS */
+.detail-scorers {
+    grid-column: 1 / 4;
+
+    width: 100%;
+    box-sizing: border-box;
+
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+
+    margin-top: 2px;
+}
+
+.detail-scorer-home {
+    text-align: right;
+    padding-right: 8px;
+}
+
+.detail-scorer-away {
+    text-align: left;
+    padding-left: 8px;
+}
+
+.detail-scorer-home div,
+.detail-scorer-away div {
+    font-size: 12px;
+    line-height: 18px;
+    white-space: normal;
+}
+
 </style>
 
 </head>
@@ -2191,18 +2304,6 @@ const awayScorers = (data.events || []).filter(
                                 ${status}
                             </div>
 
-                            <div class="detail-scorers">
-
-    <div class="detail-scorer-home">
-        ${
-            homeScorers.length
-            ? homeScorers.map(e => `
-                <div>⚽ ${e.player?.name || ""} ${e.time?.elapsed || ""}'</div>
-            `).join("")
-            : ""
-        }
-    </div>
-
     <div class="detail-scorer-away">
         ${
             awayScorers.length
@@ -2234,6 +2335,42 @@ const awayScorers = (data.events || []).filter(
                             </div>
 
                         </div>
+
+
+<!-- BUTEURS -->
+
+<div class="detail-scorers">
+
+    <div class="detail-scorer-home">
+        ${
+            homeScorers.length
+            ? homeScorers.map(e => `
+                <div>
+                    ⚽ ${e.player?.name || ""}
+                    ${e.time?.elapsed || ""}'
+                </div>
+            `).join("")
+            : ""
+        }
+    </div>
+
+    <div class="detail-scorer-away">
+        ${
+            awayScorers.length
+            ? awayScorers.map(e => `
+                <div>
+                    ${e.time?.elapsed || ""}'
+                    ${e.player?.name || ""} ⚽
+                </div>
+            `).join("")
+            : ""
+        }
+    </div>
+
+</div>
+
+
+</div>
 
                     </div>
 
