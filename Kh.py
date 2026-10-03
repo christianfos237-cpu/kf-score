@@ -2011,6 +2011,43 @@ function translateRound(round) {
     return text;
 }
 
+function translateStatus(status) {
+
+    if (!status) return "";
+
+    const code = status.short;
+
+    if (["FT", "AET", "PEN"].includes(code)) {
+        return "TERMINÉ";
+    }
+
+    if (code === "HT") {
+        return "MI-TEMPS";
+    }
+
+    if (["1H", "2H", "ET", "P"].includes(code)) {
+        return "EN DIRECT";
+    }
+
+    if (code === "NS") {
+        return "À VENIR";
+    }
+
+    if (code === "PST") {
+        return "REPORTÉ";
+    }
+
+    if (code === "CANC") {
+        return "ANNULÉ";
+    }
+
+    if (code === "ABD") {
+        return "ABANDONNÉ";
+    }
+
+    return "";
+}
+
 async function detailPage(id) {
 
     app.innerHTML = `
@@ -2043,7 +2080,14 @@ async function detailPage(id) {
         const homeScore = fixture.goals.home ?? 0;
         const awayScore = fixture.goals.away ?? 0;
 
-        const status = fixture.fixture.status;
+        const status = translateStatus(fixture.fixture.status);
+        const homeScorers = (data.events || []).filter(
+    e => e.type === "Goal" && e.team.id === home.id
+);
+
+const awayScorers = (data.events || []).filter(
+    e => e.type === "Goal" && e.team.id === away.id
+);
 
         app.innerHTML = `
 
@@ -2144,8 +2188,33 @@ async function detailPage(id) {
                             </div>
 
                             <div class="detail-status">
-                                ${status.long || ""}
+                                ${status}
                             </div>
+
+                            <div class="detail-scorers">
+
+    <div class="detail-scorer-home">
+        ${
+            homeScorers.length
+            ? homeScorers.map(e => `
+                <div>⚽ ${e.player?.name || ""} ${e.time?.elapsed || ""}'</div>
+            `).join("")
+            : ""
+        }
+    </div>
+
+    <div class="detail-scorer-away">
+        ${
+            awayScorers.length
+            ? awayScorers.map(e => `
+                <div>${e.time?.elapsed || ""}' ${e.player?.name || ""} ⚽</div>
+            `).join("")
+            : ""
+        }
+    </div>
+
+</div>
+
 
                         </div>
 
