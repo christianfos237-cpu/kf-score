@@ -1986,6 +1986,31 @@ groups[id].matches.sort(
 
 }
 
+function translateRound(round) {
+
+    if (!round) return "";
+
+    const text = String(round).trim();
+
+    // Recherche d'un numéro de journée
+    const match = text.match(/(?:-|–|—|\s)(\d+)\s*$/);
+
+    if (match) {
+        return "Journée " + match[1];
+    }
+
+    // Formats comme "Matchday 5", "Week 5", etc.
+    const numberMatch = text.match(
+        /(?:matchday|match day|week|jornada|giornata|spieltag|round|journee|journée)\s*(\d+)/i
+    );
+
+    if (numberMatch) {
+        return "Journée " + numberMatch[1];
+    }
+
+    return text;
+}
+
 async function detailPage(id) {
 
     app.innerHTML = `
@@ -2154,16 +2179,15 @@ async function detailPage(id) {
                                 fixture.league.name
                             )}
                         </span>
-
-                        ${
-                            fixture.league.round
-                            ? `
-                            <span>
-                                📅 ${fixture.league.round}
-                            </span>
-                            `
-                            : ""
-                        }
+                            ${
+    fixture.league.round
+    ? `
+        <span>
+            📅 ${translateRound(fixture.league.round)}
+        </span>
+    `
+    : ""
+}
 
                     </div>
 
