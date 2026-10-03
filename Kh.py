@@ -212,6 +212,13 @@ main {
     max-width: 900px;
     margin: auto;
     padding: 12px;
+    box-sizing: border-box;
+}
+
+@media (max-width: 600px) {
+    main {
+        padding: 0;
+    }
 }
 
 .tools {
