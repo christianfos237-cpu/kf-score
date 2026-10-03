@@ -1852,6 +1852,278 @@ async function detailPage(id) {
 
         `;
 
+async function detailPage(id) {
+
+    app.innerHTML = `
+        <div class="match-loading">
+            <div class="loading-spinner"></div>
+            <div>Chargement du match...</div>
+        </div>
+    `;
+
+    try {
+
+        const r = await fetch("/api/match/" + id);
+        const data = await r.json();
+
+        console.log("DONNÉES MATCH :", data);
+
+        if (!r.ok || data.error) {
+            throw new Error(
+                data.error || "Erreur serveur"
+            );
+        }
+
+        window.matchActuel = data;
+
+        const fixture = data.fixture;
+
+        const home = fixture.teams.home;
+        const away = fixture.teams.away;
+
+        const homeScore = fixture.goals.home ?? 0;
+        const awayScore = fixture.goals.away ?? 0;
+
+        const status = fixture.fixture.status;
+
+        app.innerHTML = `
+
+            <div class="match-detail-page">
+
+                <!-- RETOUR -->
+
+                <button
+                    class="match-back-button"
+                    onclick="datePage()"
+                >
+                    ← <span>Retour</span>
+                </button>
+
+
+                <!-- CARTE PRINCIPALE DU MATCH -->
+
+                <div class="match-main-card">
+
+                    <!-- COMPÉTITION -->
+
+                    <div class="match-competition">
+
+                        ${
+                            fixture.league.logo
+                            ? `
+                            <img
+                                src="${fixture.league.logo}"
+                                alt=""
+                                class="competition-logo"
+                            >
+                            `
+                            : ""
+                        }
+
+                        <div class="competition-text">
+
+                            <div class="competition-name">
+                                ${translateLeague(
+                                    fixture.league.name
+                                )}
+                            </div>
+
+                            <div class="competition-country">
+
+                                ${countryFlag(
+                                    fixture.league.country
+                                )}
+
+                                ${fixture.league.country || ""}
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- ÉQUIPES -->
+
+                    <div class="match-teams">
+
+                        <!-- ÉQUIPE DOMICILE -->
+
+                        <div class="detail-team">
+
+                            <img
+                                src="${home.logo || ""}"
+                                alt=""
+                                class="detail-team-logo"
+                            >
+
+                            <div class="detail-team-name">
+                                ${translateTeam(home.name)}
+                            </div>
+
+                        </div>
+
+
+                        <!-- SCORE -->
+
+                        <div class="detail-score-area">
+
+                            <div class="detail-score">
+
+                                <span>
+                                    ${homeScore}
+                                </span>
+
+                                <span class="score-separator">
+                                    -
+                                </span>
+
+                                <span>
+                                    ${awayScore}
+                                </span>
+
+                            </div>
+
+                            <div class="detail-status">
+                                ${status.long || ""}
+                            </div>
+
+                        </div>
+
+
+                        <!-- ÉQUIPE EXTÉRIEURE -->
+
+                        <div class="detail-team">
+
+                            <img
+                                src="${away.logo || ""}"
+                                alt=""
+                                class="detail-team-logo"
+                            >
+
+                            <div class="detail-team-name">
+                                ${translateTeam(away.name)}
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- INFOS RAPIDES -->
+
+                    <div class="match-quick-info">
+
+                        <span>
+                            🏆
+                            ${translateLeague(
+                                fixture.league.name
+                            )}
+                        </span>
+
+                        ${
+                            fixture.league.round
+                            ? `
+                            <span>
+                                📅 ${fixture.league.round}
+                            </span>
+                            `
+                            : ""
+                        }
+
+                    </div>
+
+                </div>
+
+
+                <!-- ONGLES -->
+
+                <div class="match-tabs">
+
+                    <button
+                        class="match-tab active"
+                        onclick="
+                            afficherOngletMatch(
+                                'resume',
+                                ${id}
+                            )
+                        "
+                    >
+                        RÉSUMÉ
+                    </button>
+
+
+                    <button
+                        class="match-tab"
+                        onclick="
+                            afficherOngletMatch(
+                                'stats',
+                                ${id}
+                            )
+                        "
+                    >
+                        STATS
+                    </button>
+
+
+                    <button
+                        class="match-tab"
+                        onclick="
+                            afficherOngletMatch(
+                                'compositions',
+                                ${id}
+                            )
+                        "
+                    >
+                        COMPOSITIONS
+                    </button>
+
+
+                    <button
+                        class="match-tab"
+                        onclick="
+                            afficherOngletMatch(
+                                'details',
+                                ${id}
+                            )
+                        "
+                    >
+                        DÉTAILS
+                    </button>
+
+
+                    <button
+                        class="match-tab"
+                        onclick="
+                            afficherOngletMatch(
+                                'classement',
+                                ${id}
+                            )
+                        "
+                    >
+                        CLASSEMENT
+                    </button>
+
+                </div>
+
+
+                <!-- CONTENU -->
+
+                <div
+                    id="contenu-match"
+                    class="match-content"
+                >
+
+                    ${afficherResumeMatch(
+                        data.events || []
+                    )}
+
+                </div>
+
+            </div>
+
+        `;
+
     } catch (e) {
 
         console.error(
@@ -1861,17 +2133,21 @@ async function detailPage(id) {
 
         app.innerHTML = `
 
-            <button
-                class="back"
-                onclick="datePage()"
-            >
-                ← Retour
-            </button>
+            <div class="match-error-page">
 
-            <div class="error">
+                <button
+                    class="match-back-button"
+                    onclick="datePage()"
+                >
+                    ← <span>Retour</span>
+                </button>
 
-                Erreur :
-                ${e.message}
+                <div class="error">
+
+                    Erreur :
+                    ${e.message}
+
+                </div>
 
             </div>
 
