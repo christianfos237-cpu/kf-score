@@ -863,7 +863,7 @@ main {
 /* ============================= */
 
 .match-main-card {
-    width: 100%;
+    width: 90%;
     max-width: none;
     box-sizing: border-box;
     margin-left: 0;
