@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, render_template_string
+main flask import Flask, jsonify, request, render_template_string
 import requests
 from datetime import datetime
 
@@ -216,8 +216,11 @@ main {
 }
 
 @media (max-width: 600px) {
-    main {
+    main:has(.match-detail-page) {
+        max-width: none;
+        width: 100%;
         padding: 0;
+        margin: 0;
     }
 }
 
