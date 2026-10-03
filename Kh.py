@@ -813,6 +813,41 @@ main {
 
 }
 
+/* LARGEUR COMPLÈTE DE LA CARTE DU MATCH */
+.match-main-card {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.detail-match-teams {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* ZONE DU SCORE */
+.detail-score-area {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* BUTEURS */
+.detail-scorers {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-top: 10px;
+    box-sizing: border-box;
+}
+
+.detail-scorer-home {
+    text-align: right;
+}
+
+.detail-scorer-away {
+    text-align: left;
+}
+
 </style>
 
 </head>
