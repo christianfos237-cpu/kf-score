@@ -913,22 +913,123 @@ main {
 
 .detail-status {
     margin-top: 5px;
-    font-size: 12px;
-    font-weight: bold;
+
+/* ============================= */
+/* CORRECTION FINALE PAGE MATCH  */
+/* ============================= */
+
+.match-main-card {
+    width: 100%;
+    box-sizing: border-box;
 }
 
-/* BUTEURS */
-.detail-scorers {
-    grid-column: 1 / 4;
+/* ÉQUIPES + SCORE */
 
+.detail-match-teams {
     width: 100%;
     box-sizing: border-box;
 
     display: grid;
+    grid-template-columns: 1fr auto 1fr;
+
+    align-items: center;
+    gap: 15px;
+}
+
+/* ÉQUIPE */
+
+.detail-team {
+    min-width: 0;
+
+    display: flex;
+    flex-direction: column;
+
+    align-items: center;
+    justify-content: center;
+
+    text-align: center;
+}
+
+.detail-team-logo {
+    width: 55px;
+    height: 55px;
+
+    object-fit: contain;
+
+    margin-bottom: 8px;
+}
+
+.detail-team-name {
+    color: white;
+
+    font-size: 14px;
+    font-weight: 800;
+
+    line-height: 18px;
+
+    text-align: center;
+
+    overflow-wrap: anywhere;
+}
+
+/* SCORE */
+
+.detail-score-area {
+    display: flex;
+
+    flex-direction: column;
+
+    align-items: center;
+    justify-content: center;
+
+    min-width: 75px;
+}
+
+.detail-score {
+    display: flex;
+
+    align-items: center;
+    justify-content: center;
+
+    gap: 8px;
+
+    color: white;
+
+    font-size: 28px;
+    font-weight: 900;
+
+    white-space: nowrap;
+}
+
+.detail-status {
+    margin-top: 7px;
+
+    color: #bbb;
+
+    font-size: 10px;
+    font-weight: 800;
+
+    white-space: nowrap;
+}
+
+/* BUTEURS */
+
+.detail-scorers {
+    grid-column: 1 / 4;
+
+    width: 100%;
+
+    display: grid;
+
     grid-template-columns: 1fr 1fr;
+
     gap: 10px;
 
-    margin-top: 2px;
+    margin-top: 8px;
+
+    box-sizing: border-box;
+
+    color: white;
 }
 
 .detail-scorer-home {
@@ -943,9 +1044,46 @@ main {
 
 .detail-scorer-home div,
 .detail-scorer-away div {
+    color: white;
+
     font-size: 12px;
     line-height: 18px;
-    white-space: normal;
+}
+
+/* CARTE SUR TOUTE LA LARGEUR DU TÉLÉPHONE */
+
+@media (max-width: 600px) {
+
+    .match-detail-page {
+        padding: 0;
+    }
+
+    .match-main-card {
+        width: 100%;
+        border-radius: 0;
+    }
+
+    .detail-match-teams {
+        padding: 10px 8px;
+        gap: 8px;
+    }
+
+    .detail-team-logo {
+        width: 50px;
+        height: 50px;
+    }
+
+    .detail-team-name {
+        font-size: 13px;
+    }
+
+    .detail-score-area {
+        min-width: 65px;
+    }
+
+    .detail-score {
+        font-size: 24px;
+    }
 }
 
 </style>
