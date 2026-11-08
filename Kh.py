@@ -1,12 +1,41 @@
-main flask import Flask, jsonify, request, render_template_string
+from flask import Flask, jsonify, request, render_template_string
 import requests
+import os
 from datetime import datetime
 
 app = Flask(__name__)
 
-API_KEY = "2aed42d74d5e1d7cc83751e05757d2a6"
+API_KEY = os.getenv("API_FOOTBALL_KEY", "")
 API_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
+
+# Sportmonks (source complémentaire)
+SPORTMONKS_TOKEN = os.getenv("SPORTMONKS_TOKEN", "")
+SPORTMONKS_URL = "https://api.sportmonks.com/v3/football"
+SPORTMONKS_HEADERS = {"Authorization": SPORTMONKS_TOKEN} if SPORTMONKS_TOKEN else {}
+
+
+def sportmonks_get(endpoint, params=None):
+    if not SPORTMONKS_TOKEN:
+        return None, "SPORTMONKS_TOKEN non configuré"
+
+    try:
+        r = requests.get(
+            SPORTMONKS_URL + "/" + endpoint,
+            headers=SPORTMONKS_HEADERS,
+            params=params or {},
+            timeout=20
+        )
+
+        data = r.json()
+
+        if r.status_code != 200:
+            return None, "Erreur Sportmonks API : " + str(r.status_code)
+
+        return data, None
+
+    except Exception as e:
+        return None, "Erreur Sportmonks : " + str(e)
 
 
 def api_get(endpoint, params):
@@ -62,6 +91,60 @@ def matches():
         "response": data.get("response", [])
     })
     
+@app.route("/api/sportmonks/live")
+def sportmonks_live():
+
+    data, error = sportmonks_get(
+        "livescores/inplay",
+        {"include": "scores;events;participants;state"}
+    )
+
+    if error:
+        return jsonify({"error": error}), 500
+
+    return jsonify({
+        "provider": "sportmonks",
+        "response": data.get("data", [])
+    })
+
+
+@app.route("/api/sportmonks/fixtures/<date>")
+def sportmonks_fixtures(date):
+
+    data, error = sportmonks_get(
+        "fixtures/date/" + date,
+        {"include": "participants;scores;state;league"}
+    )
+
+    if error:
+        return jsonify({"error": error}), 500
+
+    return jsonify({
+        "provider": "sportmonks",
+        "date": date,
+        "response": data.get("data", [])
+    })
+
+
+@app.route("/api/sportmonks/fixture/<int:fixture_id>")
+def sportmonks_fixture(fixture_id):
+
+    data, error = sportmonks_get(
+        "fixtures/" + str(fixture_id),
+        {
+            "include": "participants;scores;state;league;events;lineups;statistics"
+        }
+    )
+
+    if error:
+        return jsonify({"error": error}), 500
+
+    return jsonify({
+        "provider": "sportmonks",
+        "fixture": data.get("data")
+    })
+
+
 @app.route("/api/live")
 def live():
 
