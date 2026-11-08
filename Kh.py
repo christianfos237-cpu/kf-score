@@ -1,6 +1,9 @@
 from flask import Flask, jsonify, request, render_template_string
 import requests
 import os
+import sys
+import sqlite3
+import hashlib
 from datetime import datetime
 
 app = Flask(__name__)
@@ -10,33 +13,272 @@ API_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
 # Sportmonks (source complémentaire)
-SPORTMONKS_TOKEN = os.getenv("SPORTMONKS_TOKEN", "")
+SPORTMONKS_TOKEN = os.getenv("SPORTMONKS_TOKEN", "").strip()
 SPORTMONKS_URL = "https://api.sportmonks.com/v3/football"
 SPORTMONKS_HEADERS = {"Authorization": SPORTMONKS_TOKEN} if SPORTMONKS_TOKEN else {}
+
+# Facebook Page publishing
+FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "").strip()
+FB_PAGE_ID = os.getenv("FB_PAGE_ID", "").strip()
+FB_GRAPH_VERSION = os.getenv("FB_GRAPH_VERSION", "v26.0")
+FB_GRAPH_URL = "https://graph.facebook.com/" + FB_GRAPH_VERSION
+
+
+def _safe_api_message(response, secret=""):
+    """Return provider error details without ever echoing configured secrets."""
+    try:
+        payload = response.json()
+        error_obj = payload.get("error") or {}
+        error_message = error_obj.get("message") if isinstance(error_obj, dict) else str(error_obj)
+        message = payload.get("message") or error_message or str(payload)
+    except Exception:
+        message = (response.text or "Réponse vide")[:500]
+    if secret:
+        message = str(message).replace(secret, "[masqué]")
+    return str(message)[:700]
 
 
 def sportmonks_get(endpoint, params=None):
     if not SPORTMONKS_TOKEN:
         return None, "SPORTMONKS_TOKEN non configuré"
-
     try:
         r = requests.get(
             SPORTMONKS_URL + "/" + endpoint,
-            headers=SPORTMONKS_HEADERS,
+            headers={"Authorization": SPORTMONKS_TOKEN},
             params=params or {},
             timeout=20
         )
-
-        data = r.json()
-
+        try:
+            data = r.json()
+        except Exception:
+            data = {}
         if r.status_code != 200:
-            return None, "Erreur Sportmonks API : " + str(r.status_code)
-
+            detail = _safe_api_message(r, SPORTMONKS_TOKEN)
+            if r.status_code == 403:
+                return None, ("Sportmonks 403 : accès refusé par les droits du forfait ou du flux. "
+                              "Détail fournisseur : " + detail)
+            if r.status_code == 401:
+                return None, "Sportmonks 401 : token invalide ou non reconnu. " + detail
+            return None, "Sportmonks HTTP " + str(r.status_code) + " : " + detail
         return data, None
-
     except Exception as e:
-        return None, "Erreur Sportmonks : " + str(e)
+        return None, "Erreur de connexion Sportmonks : " + str(e)[:300]
 
+
+def sportmonks_live_or_fixtures():
+    """Try the live feed first; fall back to today's fixtures if that feed is not enabled."""
+    live_data, live_error = sportmonks_get(
+        "livescores/inplay",
+        {"include": "scores;events;participants;state;league"}
+    )
+    if not live_error:
+        return live_data.get("data", []), None, "livescores/inplay"
+
+    # A 403 can mean that the live feed is not included in the current plan.
+    # The date endpoint may still be available for leagues included in the plan.
+    today = datetime.now().strftime("%Y-%m-%d")
+    fixture_data, fixture_error = sportmonks_get(
+        "fixtures/date/" + today,
+        {"include": "scores;events;participants;state;league", "per_page": 50}
+    )
+    if not fixture_error:
+        return fixture_data.get("data", []), None, "fixtures/date"
+    return [], (live_error + " | Essai du calendrier du jour : " + fixture_error), None
+
+
+def facebook_request(method, path, params=None):
+    if not FB_PAGE_ACCESS_TOKEN:
+        return None, "FB_PAGE_ACCESS_TOKEN non configuré"
+    url = FB_GRAPH_URL + "/" + path.lstrip("/")
+    headers = {"Authorization": "Bearer " + FB_PAGE_ACCESS_TOKEN}
+    try:
+        if method.upper() == "POST":
+            response = requests.post(url, data=params or {}, headers=headers, timeout=20)
+        else:
+            response = requests.get(url, params=params or {}, headers=headers, timeout=20)
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        if response.status_code >= 400 or payload.get("error"):
+            detail = _safe_api_message(response, FB_PAGE_ACCESS_TOKEN)
+            return None, "Facebook HTTP " + str(response.status_code) + " : " + detail
+        return payload, None
+    except Exception as e:
+        return None, "Erreur de connexion Facebook : " + str(e)[:300]
+
+
+def facebook_page_info():
+    payload, error = facebook_request("GET", "me", {"fields": "id,name"})
+    if error:
+        return None, error
+    page_id = str(payload.get("id", ""))
+    if not page_id:
+        return None, "Facebook n'a pas retourné l'identifiant de la Page."
+    return {"id": page_id, "name": payload.get("name", "Page Facebook")}, None
+
+
+def facebook_publish(message):
+    if not FB_PAGE_ACCESS_TOKEN:
+        return None, "FB_PAGE_ACCESS_TOKEN non configuré"
+    page_id = FB_PAGE_ID
+    if not page_id:
+        page, error = facebook_page_info()
+        if error:
+            return None, error
+        page_id = page["id"]
+    payload, error = facebook_request("POST", page_id + "/feed", {"message": message})
+    if error:
+        return None, error
+    return payload.get("id"), None
+
+
+def automation_db_path():
+    configured = os.getenv("KF_SCORE_DB_PATH", "").strip()
+    if configured:
+        return configured
+    if os.path.isdir("/var/data"):
+        return "/var/data/kfscore_automation.sqlite3"
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "kfscore_automation.sqlite3")
+
+
+def init_automation_db():
+    path = automation_db_path()
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with sqlite3.connect(path, timeout=20) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS published_events (event_key TEXT PRIMARY KEY, post_id TEXT, created_at TEXT NOT NULL)")
+        conn.commit()
+
+
+def publish_once(event_key, message):
+    """Publish an event once; a unique SQLite key prevents duplicate posts."""
+    init_automation_db()
+    path = automation_db_path()
+    with sqlite3.connect(path, timeout=20) as conn:
+        row = conn.execute("SELECT post_id FROM published_events WHERE event_key = ?", (event_key,)).fetchone()
+        if row:
+            return {"published": False, "reason": "already_published", "post_id": row[0]}
+        try:
+            conn.execute("INSERT INTO published_events(event_key, post_id, created_at) VALUES (?, ?, ?)",
+                         (event_key, "PENDING", datetime.utcnow().isoformat()))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            return {"published": False, "reason": "already_claimed"}
+
+    post_id, error = facebook_publish(message)
+    with sqlite3.connect(path, timeout=20) as conn:
+        if error:
+            conn.execute("DELETE FROM published_events WHERE event_key = ? AND post_id = 'PENDING'", (event_key,))
+            conn.commit()
+            return {"published": False, "error": error}
+        conn.execute("UPDATE published_events SET post_id = ? WHERE event_key = ?", (post_id or "OK", event_key))
+        conn.commit()
+    return {"published": True, "post_id": post_id}
+
+
+def _nested_name(value, fallback=""):
+    if isinstance(value, dict):
+        return str(value.get("name") or value.get("short_name") or fallback)
+    if isinstance(value, str):
+        return value
+    return fallback
+
+
+def _fixture_teams(fixture):
+    participants = fixture.get("participants") or []
+    names = []
+    for item in participants:
+        if isinstance(item, dict):
+            names.append(str(item.get("name") or item.get("short_code") or "Équipe"))
+    if len(names) >= 2:
+        return names[0], names[1]
+    name = str(fixture.get("name") or "Match")
+    if " vs " in name:
+        return tuple(name.split(" vs ", 1))
+    return name, ""
+
+
+def _event_description(event, home, away):
+    event_type = _nested_name(event.get("type") or event.get("type_name") or event.get("event_type"), "")
+    detail = " ".join(str(event.get(k) or "") for k in ("name", "addition", "info", "description", "result")).strip()
+    label = (event_type + " " + detail).lower()
+    minute = event.get("minute") or event.get("time") or {}
+    if isinstance(minute, dict):
+        minute = minute.get("minute") or minute.get("elapsed") or ""
+    minute_text = (str(minute) + "e minute") if minute not in (None, "") else ""
+    player = _nested_name(event.get("player"), str(event.get("player_name") or ""))
+    if "goal" in label or "but" in label:
+        return "⚽ BUT ! " + (player + " — " if player else "") + home + " - " + away + (" (" + minute_text + ")" if minute_text else "")
+    if "yellow" in label or "jaune" in label:
+        return "🟨 Carton jaune" + (" pour " + player if player else "") + " — " + home + " - " + away + (" (" + minute_text + ")" if minute_text else "")
+    if "red" in label or "rouge" in label:
+        return "🟥 Carton rouge" + (" pour " + player if player else "") + " — " + home + " - " + away + (" (" + minute_text + ")" if minute_text else "")
+    return None
+
+
+def run_automation_once():
+    """One polling cycle. Intended for a Render Cron Job, not a web request thread."""
+    if not FB_PAGE_ACCESS_TOKEN:
+        return {"ok": False, "error": "FB_PAGE_ACCESS_TOKEN non configuré"}
+    page, fb_error = facebook_page_info()
+    if fb_error:
+        return {"ok": False, "error": "Vérification Facebook impossible : " + fb_error}
+    fixtures, sm_error, source = sportmonks_live_or_fixtures()
+    if sm_error:
+        return {"ok": False, "facebook_page": page.get("name"), "error": sm_error}
+
+    published = []
+    skipped = 0
+    for fixture in fixtures:
+        if not isinstance(fixture, dict):
+            continue
+        fixture_id = str(fixture.get("id") or "")
+        if not fixture_id:
+            continue
+        home, away = _fixture_teams(fixture)
+        events = fixture.get("events") or []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            message = _event_description(event, home, away)
+            if not message:
+                continue
+            event_id = str(event.get("id") or "")
+            if not event_id:
+                signature = "|".join(str(event.get(k) or "") for k in ("type_id", "minute", "player_id", "player_name", "name", "addition"))
+                event_id = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:20]
+            key = "sportmonks:event:" + fixture_id + ":" + event_id
+            result = publish_once(key, "KF SCORE\n" + message + "\n\nSuivez les matchs avec KF Score.")
+            if result.get("published"):
+                published.append({"event": key, "post_id": result.get("post_id")})
+            else:
+                skipped += 1
+
+        state = _nested_name(fixture.get("state"), str(fixture.get("state_name") or "")).lower()
+        if state in ("ft", "aet", "pen", "full time", "finished", "after extra time", "after penalties"):
+            scores = fixture.get("scores") or []
+            score_parts = []
+            for score in scores:
+                if isinstance(score, dict):
+                    score_value = score.get("score")
+                    if isinstance(score_value, dict):
+                        score_value = score_value.get("goals")
+                    if score_value is not None:
+                        score_parts.append(str(score_value))
+            if len(score_parts) >= 2:
+                key = "sportmonks:fulltime:" + fixture_id
+                msg = "🏁 FIN DU MATCH\n" + home + " " + score_parts[0] + " - " + score_parts[1] + " " + away
+                result = publish_once(key, "KF SCORE\n" + msg + "\n\nSuivez les résultats avec KF Score.")
+                if result.get("published"):
+                    published.append({"event": key, "post_id": result.get("post_id")})
+                else:
+                    skipped += 1
+
+    return {"ok": True, "facebook_page": page.get("name"), "source": source,
+            "fixtures_checked": len(fixtures), "published_count": len(published),
+            "skipped_or_duplicate_count": skipped, "published": published}
 
 def api_get(endpoint, params):
     try:
@@ -93,19 +335,28 @@ def matches():
     
 @app.route("/api/sportmonks/live")
 def sportmonks_live():
-
-    data, error = sportmonks_get(
-        "livescores/inplay",
-        {"include": "scores;events;participants;state"}
-    )
-
+    fixtures, error, source = sportmonks_live_or_fixtures()
     if error:
-        return jsonify({"error": error}), 500
+        return jsonify({"provider": "sportmonks", "error": error}), 502
+    return jsonify({"provider": "sportmonks", "source": source, "response": fixtures})
 
-    return jsonify({
-        "provider": "sportmonks",
-        "response": data.get("data", [])
-    })
+
+@app.route("/api/facebook/status")
+def facebook_status():
+    page, error = facebook_page_info()
+    if error:
+        return jsonify({"connected": False, "error": error}), 502
+    return jsonify({"connected": True, "page": page, "publishing_permission": "test requis"})
+
+
+@app.route("/api/automation/run", methods=["POST"])
+def automation_run_route():
+    expected = os.getenv("KF_AUTOMATION_SECRET", "").strip()
+    supplied = request.headers.get("X-Automation-Secret", "").strip()
+    if not expected or supplied != expected:
+        return jsonify({"error": "Accès non autorisé"}), 403
+    result = run_automation_once()
+    return jsonify(result), (200 if result.get("ok") else 502)
 
 
 @app.route("/api/sportmonks/fixtures/<date>")
@@ -3122,10 +3373,14 @@ def test_api():
         return {"erreur": str(e)}, 500
 
 if __name__ == "__main__":
+    if "--automation-once" in sys.argv:
+        result = run_automation_once()
+        print(result)
+        sys.exit(0 if result.get("ok") else 1)
 
     app.run(
-        host="127.0.0.1",
-        port=5000,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "5000")),
         debug=False,
         use_reloader=False
-)
+    )
