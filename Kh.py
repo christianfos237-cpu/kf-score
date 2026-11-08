@@ -134,6 +134,16 @@ def facebook_publish(message):
     return payload.get("id"), None
 
 
+def facebook_comment(post_id, message):
+    """Add a comment under a KF SCORE Facebook post."""
+    if not post_id:
+        return None, "Identifiant du post Facebook absent"
+    payload, error = facebook_request("POST", str(post_id) + "/comments", {"message": message})
+    if error:
+        return None, error
+    return payload.get("id"), None
+
+
 def facebook_publish_photo(message, image_bytes, filename="kfscore-match.png"):
     """Publish a generated match visual and caption to the Page."""
     if not FB_PAGE_ACCESS_TOKEN:
@@ -585,7 +595,79 @@ def _make_match_image(home, away, score_home, score_away, competition, phase, fi
     return out.getvalue()
 
 
-def _publish_match_post(key, message, fixture, home, away, score_home, score_away, phase, with_image=False):
+STAT_LABELS_FR = {
+    "shots on goal": "Tirs cadrés", "shots off goal": "Tirs non cadrés",
+    "total shots": "Tirs totaux", "blocked shots": "Tirs bloqués",
+    "shots insidebox": "Tirs dans la surface", "shots outsidebox": "Tirs hors surface",
+    "fouls": "Fautes", "corner kicks": "Corners", "offsides": "Hors-jeu",
+    "ball possession": "Possession", "yellow cards": "Cartons jaunes",
+    "red cards": "Cartons rouges", "goalkeeper saves": "Arrêts du gardien",
+    "total passes": "Passes", "passes accurate": "Passes réussies",
+    "passes %": "Précision des passes", "expected goals": "Buts attendus (xG)",
+}
+
+
+def _format_match_statistics(statistics):
+    """Format API-Football team statistics as a readable Facebook comment."""
+    if not isinstance(statistics, list) or not statistics:
+        return ""
+    teams = []
+    for row in statistics:
+        if not isinstance(row, dict):
+            continue
+        team_name = _nested_name(row.get("team"), "Équipe")
+        values = []
+        for stat in row.get("statistics") or []:
+            if not isinstance(stat, dict) or stat.get("value") is None:
+                continue
+            raw = str(stat.get("type") or "Statistique")
+            label = STAT_LABELS_FR.get(raw.lower(), raw)
+            values.append(label + " : " + str(stat.get("value")))
+        if values:
+            teams.append("📊 " + team_name.upper() + "\n" + "\n".join(values))
+    if not teams:
+        return ""
+    return "📊 STATISTIQUES COMPLÈTES DU MATCH\n\n" + "\n\n".join(teams)
+
+
+def _format_substitutes(lineups):
+    """List available substitutes from both teams, when lineups are supplied."""
+    if not isinstance(lineups, list) or not lineups:
+        return ""
+    teams = []
+    for row in lineups:
+        if not isinstance(row, dict):
+            continue
+        team_name = _nested_name(row.get("team"), "Équipe")
+        substitutes = row.get("substitutes") or []
+        names = []
+        for item in substitutes:
+            if not isinstance(item, dict):
+                continue
+            player = item.get("player") or item
+            name = _nested_name(player, "")
+            if name:
+                number = player.get("number") if isinstance(player, dict) else None
+                names.append((str(number) + ". " if number else "") + name)
+        if names:
+            teams.append("🔄 " + team_name.upper() + "\n" + "\n".join(names))
+    if not teams:
+        return ""
+    return "🔄 REMPLAÇANTS\n\n" + "\n\n".join(teams)
+
+
+def _match_comment_texts(fixture):
+    comments = []
+    stats = _format_match_statistics(fixture.get("statistics") or [])
+    substitutes = _format_substitutes(fixture.get("lineups") or [])
+    if stats:
+        comments.append(stats)
+    if substitutes:
+        comments.append(substitutes)
+    return comments
+
+
+def _publish_match_post(key, message, fixture, home, away, score_home, score_away, phase, with_image=False, comments=None):
     """Claim dedupe key, then publish either a card or a text-only post."""
     init_automation_db()
     path = automation_db_path()
@@ -614,7 +696,15 @@ def _publish_match_post(key, message, fixture, home, away, score_home, score_awa
             return {"published": False, "error": error}
         conn.execute("UPDATE published_events SET post_id = ? WHERE event_key = ?", (post_id or "OK", key))
         conn.commit()
-    return {"published": True, "post_id": post_id}
+    comment_errors = []
+    for comment_text in comments or []:
+        _, comment_error = facebook_comment(post_id, comment_text)
+        if comment_error:
+            comment_errors.append(comment_error)
+    result = {"published": True, "post_id": post_id}
+    if comment_errors:
+        result["comment_errors"] = comment_errors
+    return result
 
 
 def _fixture_state(fixture):
@@ -682,6 +772,7 @@ def api_football_live_or_today():
         items = data.get("response") or []
         source = "fixtures?date=" + today
     normalized = []
+    detail_requests = 0
     # Keep request volume bounded; API-Football's daily/minute quota is plan-dependent.
     for item in items[:30]:
         status = ((item.get("fixture") or {}).get("status") or {}).get("short", "")
@@ -692,7 +783,15 @@ def api_football_live_or_today():
                 event_data, event_error = api_get("fixtures/events", {"fixture": fixture_id})
                 if event_data:
                     events = event_data.get("response") or []
-        normalized.append(_api_football_to_internal(item, events))
+        internal = _api_football_to_internal(item, events)
+        # Request match statistics and bench only at halftime/fulltime to limit API quota usage.
+        if status in ("HT", "FT", "AET", "PEN") and fixture_id and detail_requests < 10:
+            stats_data, _ = api_get("fixtures/statistics", {"fixture": fixture_id})
+            lineup_data, _ = api_get("fixtures/lineups", {"fixture": fixture_id})
+            internal["statistics"] = (stats_data or {}).get("response") or []
+            internal["lineups"] = (lineup_data or {}).get("response") or []
+            detail_requests += 1
+        normalized.append(internal)
     return normalized, None, source
 
 
@@ -772,13 +871,16 @@ def run_automation_once():
             if scorers:
                 message += "\n\n⚽ 𝗕𝗨𝗧𝗘𝗨𝗥𝗦\n" + "\n".join(scorers)
             message += "\n\n" + _competition_hashtag(competition) + " #KFScore"
-            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away, "Mi-temps", with_image=True)
-            if result.get("published"): published.append(result)
+            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away,
+                                         "Mi-temps", with_image=True, comments=_match_comment_texts(fixture))
+            if result.get("published"):
+                published.append(result)
+                errors.extend(result.get("comment_errors", []))
             elif result.get("error"): errors.append(result["error"])
             else: skipped += 1
 
         # Full-time post: one per match, using the same fixed KF SCORE graphic template.
-        if state in ("ft", "aet", "pen", "full time", "finished", "after extra time", "after penalties"):
+        if state in ("ft", "aet", "pen", "full time", "finished", "match finished", "after extra time", "after penalties"):
             key = fixture.get("_provider", "sportmonks") + ":fulltime:" + fixture_id
             scorers = _format_scorers(events)
             message = "🚨 𝗧𝗘𝗥𝗠𝗜𝗡É ⏱️\n\n" + _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
@@ -786,8 +888,11 @@ def run_automation_once():
             if scorers:
                 message += "\n\n⚽ 𝗕𝗨𝗧𝗘𝗨𝗥𝗦\n" + "\n".join(scorers)
             message += "\n\n" + _competition_hashtag(competition) + " #KFScore"
-            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away, "Terminé", with_image=True)
-            if result.get("published"): published.append(result)
+            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away,
+                                         "Terminé", with_image=True, comments=_match_comment_texts(fixture))
+            if result.get("published"):
+                published.append(result)
+                errors.extend(result.get("comment_errors", []))
             elif result.get("error"): errors.append(result["error"])
             else: skipped += 1
 
