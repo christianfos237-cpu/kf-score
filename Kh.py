@@ -1171,6 +1171,140 @@ def thesportsdb_fixtures():
     return out, None
 
 
+def _mcp_tool_request(url, api_key, tool_name, arguments=None, timeout=20):
+    """Appel MCP JSON-RPC Streamable HTTP, sans exposer la clé dans les logs."""
+    if not api_key:
+        return None, "clé API non configurée"
+    body = {
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": tool_name, "arguments": arguments or {}}
+    }
+    try:
+        response = requests.post(
+            url, headers={"Authorization": "Bearer " + api_key,
+                          "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            json=body, timeout=timeout
+        )
+        if response.status_code != 200:
+            return None, "HTTP " + str(response.status_code)
+        # OpenScores may answer as JSON or as an SSE stream.
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+            for line in (response.text or "").splitlines():
+                if line.startswith("data:"):
+                    try:
+                        payload = json.loads(line[5:].strip())
+                    except Exception:
+                        continue
+        if not isinstance(payload, dict):
+            return None, "réponse MCP illisible"
+        if payload.get("error"):
+            return None, str(payload["error"].get("message") or "erreur MCP")[:250]
+        result = payload.get("result") or {}
+        if result.get("isError"):
+            return None, "erreur retournée par l'outil OpenScores"
+        structured = result.get("structuredContent")
+        if structured is not None:
+            return structured, None
+        for block in result.get("content") or []:
+            if block.get("type") == "text":
+                try:
+                    return json.loads(block.get("text") or "{}"), None
+                except Exception:
+                    continue
+        return result, None
+    except Exception as exc:
+        return None, "connexion: " + str(exc)[:160]
+
+
+def openscores_fixtures():
+    """OpenScores MCP : calendrier et données structurées, ingestion non minute-par-minute."""
+    key = os.getenv("OPENSCORES_API_KEY", "").strip()
+    if not key:
+        return [], "OPENSCORES_API_KEY non configuré"
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    payload, err = _mcp_tool_request(
+        "https://api.openscores.ai/mcp/", key, "list_fixtures",
+        {"date_from": today, "date_to": today}
+    )
+    if err:
+        return [], "OpenScores " + err
+    rows = payload if isinstance(payload, list) else None
+    if rows is None and isinstance(payload, dict):
+        rows = payload.get("items") or payload.get("fixtures") or payload.get("data") or []
+    out = []
+    for x in rows if isinstance(rows, list) else []:
+        if not isinstance(x, dict):
+            continue
+        teams = x.get("teams") or {}
+        home = teams.get("home") or x.get("home_team") or x.get("home") or {}
+        away = teams.get("away") or x.get("away_team") or x.get("away") or {}
+        score = x.get("score") or x.get("scores") or {}
+        hs = score.get("home") if isinstance(score, dict) else None
+        aws = score.get("away") if isinstance(score, dict) else None
+        if hs is None and isinstance(score, dict): hs = score.get("home_score")
+        if aws is None and isinstance(score, dict): aws = score.get("away_score")
+        league = x.get("league") or x.get("competition") or {}
+        events = x.get("events") or x.get("timeline") or []
+        fixture = _simple_internal(
+            x.get("id") or x.get("fixture_id"), _nested_name(home, x.get("home_name", "")),
+            _nested_name(away, x.get("away_name", "")), hs, aws,
+            x.get("status") or x.get("status_name") or "SCHEDULED",
+            _nested_name(league, "Football"), x.get("country") or "",
+            x.get("kickoff") or x.get("date") or x.get("start_time"), events=events,
+            provider="openscores"
+        )
+        if fixture.get("id") not in ("None", ""):
+            out.append(fixture)
+    return out, None
+
+
+def soccersapi_fixtures():
+    """SoccersAPI v2.2 : flux du jour avec événements intégrés si le forfait les autorise."""
+    key = os.getenv("SOCCERSAPI_API_KEY", "").strip()
+    if not key:
+        return [], "SOCCERSAPI_API_KEY non configuré"
+    payload, err = _provider_request(
+        "https://api.soccersapi.com/v2.2/livescores/",
+        headers={"Authorization": "Bearer " + key},
+        params={"t": "today", "include": "events", "utc": "0"}, timeout=18
+    )
+    if err:
+        return [], "SoccersAPI " + err
+    rows = payload.get("data", []) if isinstance(payload, dict) else []
+    if isinstance(rows, dict):
+        rows = rows.get("items") or rows.get("data") or []
+    out = []
+    status_map = {0: "NOT STARTED", 1: "LIVE", 2: "HALF TIME", 3: "FINISHED",
+                  4: "POSTPONED", 5: "CANCELLED", 11: "HALF TIME", 31: "FINISHED"}
+    for x in rows if isinstance(rows, list) else []:
+        if not isinstance(x, dict):
+            continue
+        teams = x.get("teams") or {}
+        home = teams.get("home") or x.get("home") or {}
+        away = teams.get("away") or x.get("away") or {}
+        score = x.get("scores") or x.get("score") or {}
+        hs = score.get("home_score", score.get("home")) if isinstance(score, dict) else None
+        aws = score.get("away_score", score.get("away")) if isinstance(score, dict) else None
+        raw_status = x.get("status") or x.get("status_name") or x.get("status_id") or ""
+        if isinstance(raw_status, dict):
+            raw_status = raw_status.get("name") or raw_status.get("description") or raw_status.get("id") or ""
+        try:
+            raw_status = status_map.get(int(raw_status), raw_status)
+        except (TypeError, ValueError):
+            pass
+        league = x.get("league") or x.get("competition") or {}
+        out.append(_simple_internal(
+            x.get("id") or x.get("fixture_id"), _nested_name(home), _nested_name(away), hs, aws,
+            raw_status, _nested_name(league, "Football"),
+            x.get("country_name") or "", x.get("kickoff") or x.get("date") or x.get("time"),
+            events=x.get("events") or [], provider="soccersapi"
+        ))
+    return out, None
+
+
 def _cached_provider_call(provider, ttl_seconds=600):
     """Cache persistant : un fournisseur secondaire n'est pas rappelé à chaque cycle."""
     init_automation_db()
@@ -1184,7 +1318,9 @@ def _cached_provider_call(provider, ttl_seconds=600):
             return json.loads(row[1]), row[2]
         except Exception:
             pass
-    ttl_seconds = 2700 if provider is footballapi_org_fixtures else (60 if provider is sportscore_fixtures else ttl_seconds)
+    ttl_seconds = (2700 if provider is footballapi_org_fixtures else
+                   1800 if provider is openscores_fixtures else
+                   60 if provider in (sportscore_fixtures, soccersapi_fixtures) else ttl_seconds)
     fixtures, error = provider()
     try:
         serialized = json.dumps(fixtures or [], ensure_ascii=False)
@@ -1200,7 +1336,8 @@ def _cached_provider_call(provider, ttl_seconds=600):
 def supplemental_fallback_fixtures():
     """Interroge les fournisseurs en cascade uniquement quand les sources principales sont vides."""
     providers = [goal_api_fixtures, highlightly_fixtures, sportapi_fixtures,
-                 sportsapi_app_fixtures, sportscore_fixtures, football_data_fixtures,
+                 sportsapi_app_fixtures, sportscore_fixtures, soccersapi_fixtures,
+                 openscores_fixtures, football_data_fixtures,
                  footballapi_org_fixtures, openligadb_fixtures, thesportsdb_fixtures]
     errors = []
     for provider in providers:
