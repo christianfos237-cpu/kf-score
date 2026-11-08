@@ -122,12 +122,12 @@ def facebook_publish(message):
     """Publish a text-only post to the configured Facebook Page."""
     if not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ACCESS_TOKEN non configuré"
-    page_id = FB_PAGE_ID
-    if not page_id:
-        page, error = facebook_page_info()
-        if error:
-            return None, error
-        page_id = page["id"]
+    # The Page ID returned by this Page token is authoritative. An old
+    # FB_PAGE_ID environment value must not redirect posts to another Page.
+    page, error = facebook_page_info()
+    if error:
+        return None, error
+    page_id = page["id"]
     payload, error = facebook_request("POST", page_id + "/feed", {"message": message})
     if error:
         return None, error
@@ -138,12 +138,12 @@ def facebook_publish_photo(message, image_bytes, filename="kfscore-match.png"):
     """Publish a generated match visual and caption to the Page."""
     if not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ACCESS_TOKEN non configuré"
-    page_id = FB_PAGE_ID
-    if not page_id:
-        page, error = facebook_page_info()
-        if error:
-            return None, error
-        page_id = page["id"]
+    # Use the Page actually associated with the current token, not a stale
+    # FB_PAGE_ID left in Render from a previous token/Page selection.
+    page, error = facebook_page_info()
+    if error:
+        return None, error
+    page_id = page["id"]
     url = FB_GRAPH_URL + "/" + page_id + "/photos"
     try:
         response = requests.post(
@@ -929,9 +929,16 @@ def automation_run_route():
     expected = os.getenv("KF_AUTOMATION_SECRET", "").strip()
     supplied = request.headers.get("X-Automation-Secret", "").strip()
     if not expected or supplied != expected:
-        return jsonify({"error": "Accès non autorisé"}), 403
-    result = run_automation_once()
-    return jsonify(result), (200 if result.get("ok") else 502)
+        return jsonify({"ok": False, "error": "Accès non autorisé"}), 403
+    try:
+        result = run_automation_once()
+        if not isinstance(result, dict):
+            result = {"ok": False, "error": "Résultat inattendu du traitement automatique."}
+        return jsonify(result), (200 if result.get("ok") else 502)
+    except Exception as exc:
+        # Return a useful diagnostic to the caller; never expose environment secrets.
+        app.logger.exception("Échec inattendu de l'automatisation KF SCORE")
+        return jsonify({"ok": False, "error": "Erreur interne pendant l'automatisation : " + str(exc)[:300]}), 500
 
 
 @app.route("/api/sportmonks/fixtures/<date>")
