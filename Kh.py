@@ -134,16 +134,6 @@ def facebook_publish(message):
     return payload.get("id"), None
 
 
-def facebook_comment(post_id, message):
-    """Add a comment under a KF SCORE Facebook post."""
-    if not post_id:
-        return None, "Identifiant du post Facebook absent"
-    payload, error = facebook_request("POST", str(post_id) + "/comments", {"message": message})
-    if error:
-        return None, error
-    return payload.get("id"), None
-
-
 def facebook_publish_photo(message, image_bytes, filename="kfscore-match.png"):
     """Publish a generated match visual and caption to the Page."""
     if not FB_PAGE_ACCESS_TOKEN:
@@ -595,79 +585,7 @@ def _make_match_image(home, away, score_home, score_away, competition, phase, fi
     return out.getvalue()
 
 
-STAT_LABELS_FR = {
-    "shots on goal": "Tirs cadrés", "shots off goal": "Tirs non cadrés",
-    "total shots": "Tirs totaux", "blocked shots": "Tirs bloqués",
-    "shots insidebox": "Tirs dans la surface", "shots outsidebox": "Tirs hors surface",
-    "fouls": "Fautes", "corner kicks": "Corners", "offsides": "Hors-jeu",
-    "ball possession": "Possession", "yellow cards": "Cartons jaunes",
-    "red cards": "Cartons rouges", "goalkeeper saves": "Arrêts du gardien",
-    "total passes": "Passes", "passes accurate": "Passes réussies",
-    "passes %": "Précision des passes", "expected goals": "Buts attendus (xG)",
-}
-
-
-def _format_match_statistics(statistics):
-    """Format API-Football team statistics as a readable Facebook comment."""
-    if not isinstance(statistics, list) or not statistics:
-        return ""
-    teams = []
-    for row in statistics:
-        if not isinstance(row, dict):
-            continue
-        team_name = _nested_name(row.get("team"), "Équipe")
-        values = []
-        for stat in row.get("statistics") or []:
-            if not isinstance(stat, dict) or stat.get("value") is None:
-                continue
-            raw = str(stat.get("type") or "Statistique")
-            label = STAT_LABELS_FR.get(raw.lower(), raw)
-            values.append(label + " : " + str(stat.get("value")))
-        if values:
-            teams.append("📊 " + team_name.upper() + "\n" + "\n".join(values))
-    if not teams:
-        return ""
-    return "📊 STATISTIQUES COMPLÈTES DU MATCH\n\n" + "\n\n".join(teams)
-
-
-def _format_substitutes(lineups):
-    """List available substitutes from both teams, when lineups are supplied."""
-    if not isinstance(lineups, list) or not lineups:
-        return ""
-    teams = []
-    for row in lineups:
-        if not isinstance(row, dict):
-            continue
-        team_name = _nested_name(row.get("team"), "Équipe")
-        substitutes = row.get("substitutes") or []
-        names = []
-        for item in substitutes:
-            if not isinstance(item, dict):
-                continue
-            player = item.get("player") or item
-            name = _nested_name(player, "")
-            if name:
-                number = player.get("number") if isinstance(player, dict) else None
-                names.append((str(number) + ". " if number else "") + name)
-        if names:
-            teams.append("🔄 " + team_name.upper() + "\n" + "\n".join(names))
-    if not teams:
-        return ""
-    return "🔄 REMPLAÇANTS\n\n" + "\n\n".join(teams)
-
-
-def _match_comment_texts(fixture):
-    comments = []
-    stats = _format_match_statistics(fixture.get("statistics") or [])
-    substitutes = _format_substitutes(fixture.get("lineups") or [])
-    if stats:
-        comments.append(stats)
-    if substitutes:
-        comments.append(substitutes)
-    return comments
-
-
-def _publish_match_post(key, message, fixture, home, away, score_home, score_away, phase, with_image=False, comments=None):
+def _publish_match_post(key, message, fixture, home, away, score_home, score_away, phase, with_image=False):
     """Claim dedupe key, then publish either a card or a text-only post."""
     init_automation_db()
     path = automation_db_path()
@@ -696,15 +614,7 @@ def _publish_match_post(key, message, fixture, home, away, score_home, score_awa
             return {"published": False, "error": error}
         conn.execute("UPDATE published_events SET post_id = ? WHERE event_key = ?", (post_id or "OK", key))
         conn.commit()
-    comment_errors = []
-    for comment_text in comments or []:
-        _, comment_error = facebook_comment(post_id, comment_text)
-        if comment_error:
-            comment_errors.append(comment_error)
-    result = {"published": True, "post_id": post_id}
-    if comment_errors:
-        result["comment_errors"] = comment_errors
-    return result
+    return {"published": True, "post_id": post_id}
 
 
 def _fixture_state(fixture):
@@ -756,25 +666,39 @@ def _api_football_to_internal(item, events=None):
 
 
 def api_football_live_or_today():
-    """Use API-Football as primary source; fetch event details only for active/finished games."""
+    """Fetch today's full fixture list, merge live fixtures, then load events for started matches."""
     if not API_KEY:
         return [], "API_FOOTBALL_KEY non configuré", None
-    data, error = api_get("fixtures", {"live": "all", "timezone": "Africa/Douala"})
-    source = "fixtures?live=all"
-    if error:
-        return [], error, None
-    items = data.get("response") or []
-    if not items:
-        today = datetime.now().strftime("%Y-%m-%d")
-        data, error = api_get("fixtures", {"date": today, "timezone": "Africa/Douala"})
-        if error:
-            return [], error, None
-        items = data.get("response") or []
-        source = "fixtures?date=" + today
+
+    # Use the competition-local date rather than the server's UTC date.
+    try:
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("Africa/Douala")).strftime("%Y-%m-%d")
+    except Exception:
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+
+    day_data, day_error = api_get("fixtures", {"date": today, "timezone": "Africa/Douala"})
+    if day_error:
+        return [], day_error, None
+    by_id = {}
+    for item in (day_data.get("response") or []):
+        fixture_id = (item.get("fixture") or {}).get("id")
+        if fixture_id:
+            by_id[str(fixture_id)] = item
+
+    # Merge the live feed so matches crossing the local date boundary are not lost.
+    live_data, live_error = api_get("fixtures", {"live": "all", "timezone": "Africa/Douala"})
+    if not live_error:
+        for item in (live_data.get("response") or []):
+            fixture_id = (item.get("fixture") or {}).get("id")
+            if fixture_id:
+                by_id[str(fixture_id)] = item
+
+    items = list(by_id.values())
+    source = "fixtures?date=" + today + "+live=all"
     normalized = []
-    detail_requests = 0
-    # Keep request volume bounded; API-Football's daily/minute quota is plan-dependent.
-    for item in items[:30]:
+    # Keep the number of event requests bounded; provider quotas depend on the API plan.
+    for item in items[:50]:
         status = ((item.get("fixture") or {}).get("status") or {}).get("short", "")
         events = []
         if status not in ("NS", "TBD", "PST", "CANC", "ABD", "AWD", "WO"):
@@ -783,16 +707,19 @@ def api_football_live_or_today():
                 event_data, event_error = api_get("fixtures/events", {"fixture": fixture_id})
                 if event_data:
                     events = event_data.get("response") or []
-        internal = _api_football_to_internal(item, events)
-        # Request match statistics and bench only at halftime/fulltime to limit API quota usage.
-        if status in ("HT", "FT", "AET", "PEN") and fixture_id and detail_requests < 10:
-            stats_data, _ = api_get("fixtures/statistics", {"fixture": fixture_id})
-            lineup_data, _ = api_get("fixtures/lineups", {"fixture": fixture_id})
-            internal["statistics"] = (stats_data or {}).get("response") or []
-            internal["lineups"] = (lineup_data or {}).get("response") or []
-            detail_requests += 1
-        normalized.append(internal)
+        normalized.append(_api_football_to_internal(item, events))
     return normalized, None, source
+
+
+def _match_has_started(fixture):
+    """Recognize API-Football live states; used to publish one kickoff notice per match."""
+    status = fixture.get("status") or {}
+    short = str(status.get("short") or "").upper() if isinstance(status, dict) else ""
+    state = _fixture_state(fixture)
+    active_codes = {"1H", "2H", "HT", "ET", "BT", "P", "LIVE"}
+    active_names = ("first half", "second half", "half time", "halftime", "extra time",
+                    "break time", "penalty", "in play", "live")
+    return short in active_codes or any(name in state for name in active_names)
 
 
 def run_automation_once():
@@ -836,6 +763,24 @@ def run_automation_once():
         competition = _competition_name(fixture)
         state = _fixture_state(fixture)
 
+        # Kickoff notice: one text-only post when the provider first reports the match as started.
+        if _match_has_started(fixture):
+            kickoff_key = fixture.get("_provider", "sportmonks") + ":kickoff:" + fixture_id
+            kickoff_message = ("🚨 𝗖’𝗘𝗦𝗧 𝗣𝗔𝗥𝗧𝗜 ! ⚽\n\n" +
+                               _club_label(home, competition) + " - " +
+                               _club_label(away, competition, "away") + "\n\n" +
+                               "🏆 " + _competition_name_fr(fixture) + "\n\n" +
+                               _competition_hashtag(competition) + " #KFScore")
+            kickoff_result = _publish_match_post(kickoff_key, kickoff_message, fixture,
+                                                   home, away, score_home, score_away,
+                                                   "Coup d’envoi", with_image=False)
+            if kickoff_result.get("published"):
+                published.append(kickoff_result)
+            elif kickoff_result.get("error"):
+                errors.append(kickoff_result["error"])
+            else:
+                skipped += 1
+
         # Only goals and red cards are published live. Yellow cards are intentionally ignored.
         for event in events:
             if not isinstance(event, dict):
@@ -862,8 +807,12 @@ def run_automation_once():
             elif result.get("error"): errors.append(result["error"])
             else: skipped += 1
 
-        # Halftime post: one per match, with a generated match graphic.
-        if state in ("half time", "halftime", "ht", "break"):
+        # Halftime post: API-Football supplies both a short code (HT) and
+        # a long label (Halftime). Check both because _fixture_state prefers
+        # the long label and providers do not use identical wording.
+        status_short = str((fixture.get("status") or {}).get("short") or "").upper()
+        state_norm = state.replace("-", " ").strip()
+        if status_short == "HT" or state_norm in ("half time", "halftime", "ht", "break", "break time"):
             key = fixture.get("_provider", "sportmonks") + ":halftime:" + fixture_id
             scorers = _format_scorers(events)
             message = "🚨 𝗠𝗜-𝗧𝗘𝗠𝗣𝗦 ⏱️\n\n" + _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
@@ -871,16 +820,18 @@ def run_automation_once():
             if scorers:
                 message += "\n\n⚽ 𝗕𝗨𝗧𝗘𝗨𝗥𝗦\n" + "\n".join(scorers)
             message += "\n\n" + _competition_hashtag(competition) + " #KFScore"
-            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away,
-                                         "Mi-temps", with_image=True, comments=_match_comment_texts(fixture))
-            if result.get("published"):
-                published.append(result)
-                errors.extend(result.get("comment_errors", []))
+            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away, "Mi-temps", with_image=True)
+            if result.get("published"): published.append(result)
             elif result.get("error"): errors.append(result["error"])
             else: skipped += 1
 
-        # Full-time post: one per match, using the same fixed KF SCORE graphic template.
-        if state in ("ft", "aet", "pen", "full time", "finished", "match finished", "after extra time", "after penalties"):
+        # Full-time post: API-Football's long status is usually "Match Finished"
+        # while its short status is "FT". Accept both, plus Sportmonks labels.
+        # This was the reason FT posts could be silently skipped.
+        if status_short in ("FT", "AET", "PEN") or state_norm in (
+            "ft", "aet", "pen", "full time", "fulltime", "finished",
+            "match finished", "after extra time", "after penalties"
+        ):
             key = fixture.get("_provider", "sportmonks") + ":fulltime:" + fixture_id
             scorers = _format_scorers(events)
             message = "🚨 𝗧𝗘𝗥𝗠𝗜𝗡É ⏱️\n\n" + _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
@@ -888,11 +839,8 @@ def run_automation_once():
             if scorers:
                 message += "\n\n⚽ 𝗕𝗨𝗧𝗘𝗨𝗥𝗦\n" + "\n".join(scorers)
             message += "\n\n" + _competition_hashtag(competition) + " #KFScore"
-            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away,
-                                         "Terminé", with_image=True, comments=_match_comment_texts(fixture))
-            if result.get("published"):
-                published.append(result)
-                errors.extend(result.get("comment_errors", []))
+            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away, "Terminé", with_image=True)
+            if result.get("published"): published.append(result)
             elif result.get("error"): errors.append(result["error"])
             else: skipped += 1
 
