@@ -1,8 +1,14 @@
 name: KF SCORE - Automatisation des matchs
 
 on:
+  # Déclenche un premier test dès qu'un commit est envoyé sur main.
+  push:
+    branches:
+      - main
+  # Vérification périodique (minimum autorisé par GitHub : 5 minutes).
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '2-59/5 * * * *'
+  # Permet aussi un lancement manuel depuis l'onglet Actions.
   workflow_dispatch:
 
 permissions:
@@ -17,35 +23,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Vérifier les événements en continu pendant la session
+      - name: Vérifier les événements KF SCORE
         env:
           AUTOMATION_SECRET: ${{ secrets.KF_AUTOMATION_SECRET }}
         shell: bash
         run: |
           set -u
           if [ -z "$AUTOMATION_SECRET" ]; then
-            echo "Secret KF_AUTOMATION_SECRET manquant dans GitHub Actions."
+            echo "ERREUR : secret KF_AUTOMATION_SECRET absent ou vide."
             exit 1
           fi
 
           start_time=$(date +%s)
-          echo "Démarrage de la surveillance KF SCORE."
+          echo "Surveillance KF SCORE démarrée."
 
           while true; do
             now=$(date +%s)
             elapsed=$((now - start_time))
             if [ "$elapsed" -ge 255 ]; then
-              echo "Fin de cette session de surveillance."
+              echo "Fin de la session de surveillance."
               break
             fi
 
-            echo "Vérification des buts et cartons rouges..."
-            curl --silent --show-error --fail-with-body \
+            echo "Appel de l'API Render : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            if ! curl --silent --show-error --fail-with-body \
               --max-time 20 \
               --request POST \
               --header "X-Automation-Secret: ${AUTOMATION_SECRET}" \
-              "https://kf-score-3.onrender.com/api/automation/run" \
-              || echo "Vérification échouée ; nouvelle tentative au prochain cycle."
+              "https://kf-score-3.onrender.com/api/automation/run"; then
+              echo "ERREUR : l'appel Render a échoué ; nouvelle tentative au cycle suivant."
+            fi
 
             sleep 15
           done
