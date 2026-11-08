@@ -904,16 +904,16 @@ def api_football_live_or_today():
     source = "fixtures?date=" + today + "+live=all"
     normalized = []
     # Keep the number of event requests bounded; provider quotas depend on the API plan.
-    for item in items[:50]:
+    for item_index, item in enumerate(items):
         status = ((item.get("fixture") or {}).get("status") or {}).get("short", "")
         events = []
         fixture_id = (item.get("fixture") or {}).get("id")
-        if status not in ("NS", "TBD", "PST", "CANC", "ABD", "AWD", "WO") and fixture_id:
+        if item_index < 50 and status not in ("NS", "TBD", "PST", "CANC", "ABD", "AWD", "WO") and fixture_id:
             event_data, event_error = api_get("fixtures/events", {"fixture": fixture_id})
             if event_data:
                 events = event_data.get("response") or []
         # Fetch official starting XIs only for fixtures due within the next 120 minutes.
-        if status in ("NS", "TBD") and fixture_id:
+        if item_index < 50 and status in ("NS", "TBD") and fixture_id:
             try:
                 from datetime import timezone
                 kickoff = datetime.fromisoformat(str((item.get("fixture") or {}).get("date", "")).replace("Z", "+00:00"))
@@ -1349,6 +1349,408 @@ def supplemental_fallback_fixtures():
     return [], errors, None
 
 
+
+def _canonical_match_key(fixture):
+    """Identifiant stable entre fournisseurs pour une même rencontre."""
+    import re, unicodedata
+    home, away = _fixture_teams(fixture)
+    league = _competition_name(fixture)
+    kickoff = str(fixture.get("kickoff_date") or "")
+    try:
+        dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+        match_day = dt.date().isoformat()
+    except Exception:
+        match_day = kickoff[:10]
+    def norm(value):
+        value = unicodedata.normalize("NFKD", str(value or "").lower())
+        value = "".join(c for c in value if not unicodedata.combining(c))
+        return re.sub(r"[^a-z0-9]+", "", value)
+    identity = "|".join((norm(home), norm(away), norm(league), match_day))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+
+
+def _deduplicate_fixtures(fixtures):
+    """Fusion prudente : une fiche par match, en privilégiant les données riches."""
+    unique = {}
+    for item in fixtures or []:
+        if not isinstance(item, dict):
+            continue
+        home, away = _fixture_teams(item)
+        if not home or not away or home == "Équipe" or away == "Équipe":
+            continue
+        key = _canonical_match_key(item)
+        if key not in unique:
+            item["_kf_match_key"] = key
+            unique[key] = item
+            continue
+        old = unique[key]
+        # Garder la source ayant le plus de détails, sans écraser un score connu par zéro.
+        def richness(row):
+            return (sum(1 for x in (row.get("events"), row.get("lineups")) if x),
+                    sum(1 for x in _fixture_scores(row) if str(x) not in ("", "None")),
+                    bool(row.get("kickoff_date")))
+        if richness(item) > richness(old):
+            item["_kf_match_key"] = key
+            unique[key] = item
+        else:
+            # Compléter les détails absents depuis l'autre fournisseur.
+            for field in ("events", "lineups"):
+                if not old.get(field) and item.get(field):
+                    old[field] = item[field]
+            if not old.get("kickoff_date") and item.get("kickoff_date"):
+                old["kickoff_date"] = item["kickoff_date"]
+    return list(unique.values())
+
+def _live_digest_minute(fixture):
+    status = fixture.get("status") or {}
+    if isinstance(status, dict):
+        elapsed = status.get("elapsed") or status.get("minute")
+        short = str(status.get("short") or "").upper()
+        long = str(status.get("long") or "").lower()
+    else:
+        elapsed, short, long = None, "", str(status).lower()
+    if elapsed is not None:
+        try:
+            return str(int(elapsed)) + "’"
+        except Exception:
+            pass
+    state = _fixture_state(fixture)
+    if short == "HT" or state in ("half time", "halftime", "ht", "break"):
+        return "MI-TEMPS"
+    if "extra" in state:
+        return "PROLONGATION"
+    return "EN COURS"
+
+
+def _live_digest_stats(fixture):
+    """Use only statistics already supplied by a provider; never invent values."""
+    raw = fixture.get("statistics") or fixture.get("stats") or []
+    if not isinstance(raw, list) or len(raw) < 2:
+        return ""
+    teams = []
+    for entry in raw[:2]:
+        values = entry.get("statistics") or entry.get("stats") or [] if isinstance(entry, dict) else []
+        mapped = {}
+        for item in values:
+            if isinstance(item, dict):
+                key = str(item.get("type") or item.get("name") or "").lower()
+                mapped[key] = item.get("value")
+        def pick(*needles):
+            for key, value in mapped.items():
+                if any(n in key for n in needles) and value not in (None, ""):
+                    return str(value)
+            return "—"
+        teams.append((pick("corner"), pick("yellow card"), pick("shots on target", "on target"), pick("possession")))
+    if len(teams) != 2:
+        return ""
+    a, b = teams
+    return "   ⛳ " + a[0] + "–" + b[0] + "   🟨 " + a[1] + "–" + b[1] + "   🎯 " + a[2] + "–" + b[2] + "   🅿️ " + a[3] + "–" + b[3]
+
+
+# Championnats retenus pour le récapitulatif quotidien KF SCORE.
+DAILY_RESULTS_LEAGUES = (
+    ("UEFA Champions League", ("uefa champions league", "champions league", "ligue des champions")),
+    ("UEFA Europa League", ("uefa europa league", "europa league", "ligue europa")),
+    ("Premier League", ("premier league",)),
+    ("La Liga", ("la liga", "laliga", "primera division")),
+    ("Serie A", ("serie a", "italian serie a")),
+    ("Bundesliga", ("bundesliga",)),
+    ("Ligue 1", ("ligue 1", "ligue1", "french ligue 1")),
+    ("Eredivisie", ("eredivisie",)),
+    ("Primeira Liga", ("primeira liga", "liga portugal", "portuguese league")),
+    ("Championship", ("championship", "english championship")),
+    ("Ligue 2", ("ligue 2", "ligue2", "french ligue 2")),
+    ("Serie B", ("serie b", "italian serie b")),
+    ("Süper Lig", ("super lig", "süper lig", "turkish super lig")),
+)
+
+
+def _daily_league_for_fixture(fixture):
+    import unicodedata
+    raw = unicodedata.normalize("NFKD", _competition_name(fixture).lower())
+    raw = "".join(c for c in raw if not unicodedata.combining(c))
+    for display, aliases in DAILY_RESULTS_LEAGUES:
+        for alias in aliases:
+            a = unicodedata.normalize("NFKD", alias.lower())
+            a = "".join(c for c in a if not unicodedata.combining(c))
+            if a in raw:
+                # Avoid confusing the English Championship with other leagues.
+                if display == "Championship" and any(x in raw for x in ("women", "u21", "u23")):
+                    continue
+                return display
+    return None
+
+
+def _daily_finished(fixture):
+    status = fixture.get("status") or {}
+    short = str(status.get("short") or "").upper() if isinstance(status, dict) else ""
+    state = _fixture_state(fixture)
+    return short in ("FT", "AET", "PEN", "FULL_TIME") or any(
+        token in state for token in ("finished", "full time", "after extra time", "after penalties", "termin")
+    )
+
+
+def _daily_kickoff_local(fixture):
+    from datetime import timezone, timedelta
+    raw = str(fixture.get("kickoff_date") or "")
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone(timedelta(hours=1)))
+    except Exception:
+        return None
+
+
+def _daily_half_score(fixture):
+    """Optional first-half score from provider score rows; omit if unavailable."""
+    participants = fixture.get("participants") or []
+    ids = {}
+    for team in participants:
+        if isinstance(team, dict):
+            loc = str((team.get("meta") or {}).get("location") or team.get("location") or "").lower()
+            if loc in ("home", "away"):
+                ids[loc] = team.get("id")
+    values = {}
+    for row in fixture.get("scores") or []:
+        if not isinstance(row, dict) or str(row.get("description") or "").upper() not in ("1ST_HALF", "HT", "HALF_TIME"):
+            continue
+        val = row.get("score")
+        if isinstance(val, dict): val = val.get("goals")
+        pid = row.get("participant_id")
+        for side in ("home", "away"):
+            if pid == ids.get(side) and val is not None: values[side] = str(val)
+    if len(values) == 2:
+        return values["home"] + "–" + values["away"]
+    return ""
+
+
+def _make_daily_results_image(league, rows, local_day):
+    from io import BytesIO
+    from PIL import Image, ImageDraw, ImageFont
+    width, row_h = 1200, 118
+    height = max(650, 340 + len(rows) * row_h + 90)
+    img = Image.new("RGB", (width, height), (8, 11, 18))
+    draw = ImageDraw.Draw(img)
+    try:
+        brand = ImageFont.truetype("DejaVuSans-Bold.ttf", 54)
+        title = ImageFont.truetype("DejaVuSans-Bold.ttf", 39)
+        small = ImageFont.truetype("DejaVuSans.ttf", 23)
+        teamfont = ImageFont.truetype("DejaVuSans-Bold.ttf", 27)
+        scorefont = ImageFont.truetype("DejaVuSans-Bold.ttf", 34)
+    except Exception:
+        brand = title = small = teamfont = scorefont = ImageFont.load_default()
+    draw.rounded_rectangle((42, 34, 390, 112), radius=18, fill=(22, 29, 43), outline=(90, 110, 140), width=2)
+    draw.text((68, 45), "KF SCORE", font=brand, fill=(255,255,255))
+    draw.text((48, 155), "RÉSULTATS DU JOUR", font=title, fill=(255,255,255))
+    draw.text((50, 215), league.upper(), font=title, fill=(95,190,255))
+    draw.text((50, 275), local_day.strftime("%d/%m/%Y") + "  •  GMT+1", font=small, fill=(185,195,210))
+    y = 335
+    for index, item in enumerate(rows, 1):
+        draw.rounded_rectangle((40, y, width-40, y+96), radius=16, fill=(18,24,36), outline=(55,67,85), width=1)
+        draw.text((62, y+12), item["time"], font=small, fill=(150,175,205))
+        draw.text((190, y+12), item["home"][:28], font=teamfont, fill=(245,247,250))
+        score = item["score"]
+        box = draw.textbbox((0,0), score, font=scorefont)
+        draw.text((width-70-(box[2]-box[0]), y+28), score, font=scorefont, fill=(100,220,150))
+        away_box = draw.textbbox((0,0), item["away"][:28], font=teamfont)
+        draw.text((width-100-(box[2]-box[0])-(away_box[2]-away_box[0])-22, y+12), item["away"][:28], font=teamfont, fill=(245,247,250))
+        if item.get("half"):
+            draw.text((190, y+55), "Mi-temps : " + item["half"], font=small, fill=(175,185,200))
+        y += row_h
+    draw.text((48, height-55), "Ici, on vit le football.  •  #KFScore", font=small, fill=(160,175,195))
+    out = BytesIO(); img.save(out, format="JPEG", quality=90, optimize=True)
+    return out.getvalue()
+
+
+def _publish_daily_results(fixtures):
+    """Publish one image recap per selected competition/day after 22:00 WAT."""
+    from datetime import timezone, timedelta
+    local_tz = timezone(timedelta(hours=1))
+    now = datetime.now(local_tz)
+    if now.hour < 22:
+        return {"published": False, "reason": "before_22h_gmt_plus_1"}
+    grouped = {}
+    for fixture in _deduplicate_fixtures(fixtures or []):
+        if not _daily_finished(fixture):
+            continue
+        league = _daily_league_for_fixture(fixture)
+        kickoff = _daily_kickoff_local(fixture)
+        if not league or not kickoff or kickoff.date() != now.date():
+            continue
+        home, away = _fixture_teams(fixture)
+        sh, sa = _fixture_scores(fixture)
+        if not home or not away:
+            continue
+        grouped.setdefault(league, {})[_canonical_match_key(fixture)] = {
+            "time": kickoff.strftime("%H:%M"), "home": _french_team_name(home),
+            "away": _french_team_name(away), "score": str(sh) + " – " + str(sa),
+            "half": _daily_half_score(fixture)
+        }
+    results = []
+    for league, matches in grouped.items():
+        rows = sorted(matches.values(), key=lambda x: x["time"])
+        key = "daily-results:" + now.strftime("%Y%m%d") + ":" + hashlib.sha256(league.lower().encode()).hexdigest()[:16]
+        init_automation_db(); path = automation_db_path()
+        with sqlite3.connect(path, timeout=20) as conn:
+            if conn.execute("SELECT 1 FROM published_events WHERE event_key=?", (key,)).fetchone():
+                results.append({"league": league, "published": False, "reason": "already_published"}); continue
+            try:
+                conn.execute("INSERT INTO published_events(event_key,post_id,created_at) VALUES(?, 'PENDING', ?)", (key, datetime.utcnow().isoformat())); conn.commit()
+            except sqlite3.IntegrityError:
+                results.append({"league": league, "published": False, "reason": "already_claimed"}); continue
+        caption = ("🏁 𝗥É𝗦𝗨𝗟𝗧𝗔𝗧𝗦 𝗗𝗨 𝗝𝗢𝗨𝗥 | " + league + "\n\n" +
+                   str(len(rows)) + " rencontre(s) terminée(s) aujourd'hui.\n" +
+                   "Tous les scores et horaires sont indiqués sur le visuel.\n\n" +
+                   _competition_hashtag(league) + " #KFScore")
+        try:
+            image_bytes = _make_daily_results_image(league, rows, now)
+            post_id, error = facebook_publish_photo(caption, image_bytes, "kfscore-resultats-" + now.strftime("%Y%m%d") + ".jpg")
+        except Exception as exc:
+            post_id, error = None, str(exc)[:300]
+        with sqlite3.connect(path, timeout=20) as conn:
+            if error:
+                conn.execute("DELETE FROM published_events WHERE event_key=? AND post_id='PENDING'", (key,))
+                results.append({"league": league, "published": False, "error": error})
+            else:
+                conn.execute("UPDATE published_events SET post_id=? WHERE event_key=?", (post_id or "OK", key))
+                results.append({"league": league, "published": True, "post_id": post_id})
+            conn.commit()
+    return {"published": any(x.get("published") for x in results), "leagues": results,
+            "reason": "no_finished_matches_for_selected_leagues" if not results else "processed"}
+
+
+
+def _daily_league_order(name):
+    order = {item[0]: index for index, item in enumerate(DAILY_RESULTS_LEAGUES)}
+    return order.get(name, 999)
+
+
+def _daily_rows(fixtures, local_day, finished_only=False):
+    grouped = {}
+    for fixture in _deduplicate_fixtures(fixtures or []):
+        league = _daily_league_for_fixture(fixture)
+        kickoff = _daily_kickoff_local(fixture)
+        if not league or not kickoff or kickoff.date() != local_day:
+            continue
+        if finished_only and not _daily_finished(fixture):
+            continue
+        home, away = _fixture_teams(fixture)
+        if not home or not away:
+            continue
+        sh, sa = _fixture_scores(fixture)
+        status = fixture.get("status") or {}
+        short = str(status.get("short") or "").upper() if isinstance(status, dict) else ""
+        if finished_only:
+            result = str(sh) + " – " + str(sa)
+        else:
+            result = "À venir" if short in ("NS", "TBD", "") else (str(sh) + " – " + str(sa))
+        row = {"time": kickoff.strftime("%H:%M"), "home": _french_team_name(home),
+               "away": _french_team_name(away), "score": result, "league": league,
+               "half": _daily_half_score(fixture)}
+        grouped.setdefault(league, {})[_canonical_match_key(fixture)] = row
+    return grouped
+
+
+def _publish_daily_program(fixtures):
+    """Publie le programme textuel complet disponible à minuit GMT+1."""
+    from datetime import timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=1)))
+    if now.hour != 0:
+        return {"published": False, "reason": "outside_midnight_window"}
+    grouped = _daily_rows(fixtures, now.date(), finished_only=False)
+    if not grouped:
+        return {"published": False, "reason": "no_program_matches"}
+    lines = ["⚽ 𝗣𝗥𝗘𝗦𝗘𝗡𝗧𝗔𝗧𝗜𝗢𝗡 𝗗𝗨 𝗣𝗥𝗢𝗚𝗥𝗔𝗠𝗠𝗘 𝗗𝗨 𝗝𝗢𝗨𝗥",
+             now.strftime("📅 %A %d %B %Y") + " | ⌚ GMT+1", ""]
+    for league in sorted(grouped, key=_daily_league_order):
+        lines.append("🏆 " + league.upper())
+        for row in sorted(grouped[league].values(), key=lambda x: x["time"]):
+            lines.append(row["time"] + " | " + row["home"] + " 🆚 " + row["away"])
+        lines.append("")
+    tags = []
+    for league in sorted(grouped, key=_daily_league_order):
+        tag = _competition_hashtag(league)
+        if tag and tag not in tags: tags.append(tag)
+    lines.extend(["#KFScore"] + tags)
+    result = publish_once("daily-program:" + now.strftime("%Y%m%d"), "\n".join(lines))
+    result["leagues"] = len(grouped)
+    result["matches"] = sum(len(v) for v in grouped.values())
+    return result
+
+
+def _publish_global_daily_results(fixtures):
+    """Publie à 23h le bilan textuel global après les récapitulatifs détaillés."""
+    from datetime import timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=1)))
+    if now.hour != 23:
+        return {"published": False, "reason": "before_23h_or_outside_window"}
+    grouped = _daily_rows(fixtures, now.date(), finished_only=True)
+    if not grouped:
+        return {"published": False, "reason": "no_finished_matches"}
+    lines = ["🏁 𝗕𝗜𝗟𝗔𝗡 𝗚𝗟𝗢𝗕𝗔𝗟 𝗗𝗘𝗦 𝗥𝗘𝗦𝗨𝗟𝗧𝗔𝗧𝗦",
+             now.strftime("📅 %A %d %B %Y") + " | GMT+1", ""]
+    for league in sorted(grouped, key=_daily_league_order):
+        lines.append("🏆 " + league.upper())
+        for row in sorted(grouped[league].values(), key=lambda x: x["time"]):
+            line = row["time"] + " | " + row["home"] + " " + row["score"] + " " + row["away"]
+            if row.get("half"):
+                line += " (MT " + row["half"] + ")"
+            lines.append(line)
+        lines.append("")
+    tags = []
+    for league in sorted(grouped, key=_daily_league_order):
+        tag = _competition_hashtag(league)
+        if tag and tag not in tags: tags.append(tag)
+    lines.extend(["#KFScore"] + tags)
+    result = publish_once("global-daily-results:" + now.strftime("%Y%m%d"), "\n".join(lines))
+    result["leagues"] = len(grouped)
+    result["matches"] = sum(len(v) for v in grouped.values())
+    return result
+
+def _publish_live_digest(fixtures):
+    """One French live-score roundup per 15-minute UTC slot, idempotent in SQLite."""
+    live_rows = []
+    active = ("1st half", "first half", "2nd half", "second half", "half time", "halftime",
+              "extra time", "in play", "live", "penalty", "break time", "ht")
+    for fixture in fixtures or []:
+        if not isinstance(fixture, dict):
+            continue
+        state = _fixture_state(fixture)
+        status = fixture.get("status") or {}
+        short = str(status.get("short") or "").upper() if isinstance(status, dict) else ""
+        if not (short in ("1H", "2H", "HT", "ET", "P", "LIVE") or any(x in state for x in active)):
+            continue
+        home, away = _fixture_teams(fixture)
+        if not home or not away:
+            continue
+        sh, sa = _fixture_scores(fixture)
+        comp = _competition_name_fr(fixture)
+        minute = _live_digest_minute(fixture)
+        line = "◉ " + minute + " | " + _club_label(home, comp) + " " + str(sh) + "–" + str(sa) + " " + _club_label(away, comp, "away")
+        line += "\n   🏆 " + comp
+        stats = _live_digest_stats(fixture)
+        if stats:
+            line += "\n" + stats
+        live_rows.append((str(_canonical_match_key(fixture)), line))
+    if not live_rows:
+        return {"published": False, "reason": "no_live_matches"}
+    # Stable order and unique canonical identities prevent duplicate rows in the same roundup.
+    unique = {}
+    for key, line in live_rows:
+        unique.setdefault(key, line)
+    now = datetime.utcnow()
+    slot = now.strftime("%Y%m%d%H") + ("00" if now.minute < 15 else "15" if now.minute < 30 else "30" if now.minute < 45 else "45")
+    message = ("🔴 𝗞𝗙 𝗦𝗖𝗢𝗥𝗘 | 𝗗𝗜𝗥𝗘𝗖𝗧 ⏱️\n"
+               "📡 Point complet des rencontres en cours | " + now.strftime("%H:%M") + " GMT\n\n" +
+               "\n\n".join(unique.values()) +
+               "\n\n━━━━━━━━━━━━━━━━\n🅿️ Possession  |  ⛳ Corners  |  🎯 Tirs cadrés  |  🟨 Cartons jaunes\n"
+               "Les statistiques sont affichées uniquement lorsqu'elles sont fournies par la source.\n"
+               "━━━━━━━━━━━━━━━━\n#KFScore")
+    result = publish_once("live-digest:" + slot, message)
+    return result
+
+
 def run_automation_once():
     """One polling cycle. Configure as a Render Cron Job for scheduled polling."""
     if not FB_PAGE_ACCESS_TOKEN:
@@ -1382,11 +1784,13 @@ def run_automation_once():
                 "fixtures_checked": 0, "published_count": 0, "skipped_or_duplicate_count": 0,
                 "provider_errors": provider_errors, "message": "Aucun match à traiter pour le moment."}
 
+    fixtures = _deduplicate_fixtures(fixtures)
     published, skipped, errors = [], 0, []
     for fixture in fixtures:
         if not isinstance(fixture, dict):
             continue
         fixture_id = str(fixture.get("id") or "")
+        match_key = str(fixture.get("_kf_match_key") or _canonical_match_key(fixture))
         if not fixture_id:
             continue
         home, away = _fixture_teams(fixture)
@@ -1426,7 +1830,7 @@ def run_automation_once():
                               "\n\n".join(lineup_lines) + "\n\n" +
                               _competition_hashtag(competition) + " #KFScore")
             lineup_message = lineup_message.replace("𝟎𝟎:𝟎𝟎", "".join({"0":"𝟎","1":"𝟏","2":"𝟐","3":"𝟑","4":"𝟒","5":"𝟓","6":"𝟔","7":"𝟕","8":"𝟖","9":"𝟗"}[c] for c in kickoff_gmt))
-            lineup_key = fixture.get("_provider", "api-football") + ":lineups:" + fixture_id
+            lineup_key = "match:" + match_key + ":lineups"
             try:
                 lineup_image = _make_lineups_image(home, away, lineups[:2], kickoff_gmt, competition)
                 result = _publish_lineups_post(lineup_key, lineup_message, fixture, lineup_image)
@@ -1441,7 +1845,7 @@ def run_automation_once():
 
         # Kickoff notice: one text-only post when the provider first reports the match as started.
         if _match_has_started(fixture):
-            kickoff_key = fixture.get("_provider", "sportmonks") + ":kickoff:" + fixture_id
+            kickoff_key = "match:" + match_key + ":kickoff"
             kickoff_teams_line = (
                 _club_label(home, competition) + " " +
                 _emoji_score(score_home) + "-" + _emoji_score(score_away) + " " +
@@ -1478,9 +1882,9 @@ def run_automation_once():
                 headline = "⏱️" + (minute + "'" if minute else "") + "⚽ BUUUUUT DE " + player + " " + flag
                 key_type = "goal"
             message = headline + "\n\n" + teams_line + "\n\n" + _competition_hashtag(competition) + " #KFScore"
-            event_id = str(event.get("id") or hashlib.sha256((key_type + "|" + _minute(event) + "|" + player).encode("utf-8")).hexdigest()[:24])
+            event_id = hashlib.sha256((key_type + "|" + _minute(event) + "|" + player.lower()).encode("utf-8")).hexdigest()[:24]
             provider = fixture.get("_provider", "sportmonks")
-            result = _publish_match_post(provider + ":" + key_type + ":" + fixture_id + ":" + event_id,
+            result = _publish_match_post("match:" + match_key + ":" + key_type + ":" + event_id,
                                          message, fixture, home, away, score_home, score_away,
                                          key_type, with_image=False)
             if result.get("published"): published.append(result)
@@ -1493,7 +1897,7 @@ def run_automation_once():
         status_short = str((fixture.get("status") or {}).get("short") or "").upper()
         state_norm = state.replace("-", " ").strip()
         if status_short == "HT" or state_norm in ("half time", "halftime", "ht", "break", "break time"):
-            key = fixture.get("_provider", "sportmonks") + ":halftime:" + fixture_id
+            key = "match:" + match_key + ":halftime"
             scorers = _format_scorers(events)
             message = ("🚨 𝗠𝗜-𝗧𝗘𝗠𝗣𝗦 ⏱️\n\n" +
                        _club_label(home, competition) + " " + _emoji_score(score_home) + "-" +
@@ -1529,7 +1933,7 @@ def run_automation_once():
             "ft", "aet", "pen", "full time", "fulltime", "finished",
             "match finished", "after extra time", "after penalties"
         ):
-            key = fixture.get("_provider", "sportmonks") + ":fulltime:" + fixture_id
+            key = "match:" + match_key + ":fulltime"
             scorers = _format_scorers(events)
             message = "🚨 𝗧𝗘𝗥𝗠𝗜𝗡É ⏱️\n\n" + _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
             message += "\n\n🏆 " + _competition_name_fr(fixture)
@@ -1548,10 +1952,32 @@ def run_automation_once():
             elif result.get("error"): errors.append(result["error"])
             else: skipped += 1
 
+    daily_result = _publish_daily_results(fixtures)
+    if daily_result.get("published"):
+        published.append({"type": "daily_results", "leagues": daily_result.get("leagues", [])})
+    for item in daily_result.get("leagues", []):
+        if item.get("error"):
+            errors.append("Récapitulatif " + item.get("league", "") + " : " + str(item["error"])[:180])
+    program_result = _publish_daily_program(fixtures)
+    if program_result.get("published"):
+        published.append({"type": "daily_program", "matches": program_result.get("matches", 0)})
+    elif program_result.get("error"):
+        errors.append("Programme quotidien : " + str(program_result["error"])[:180])
+    global_result = _publish_global_daily_results(fixtures)
+    if global_result.get("published"):
+        published.append({"type": "global_daily_results", "matches": global_result.get("matches", 0)})
+    elif global_result.get("error"):
+        errors.append("Bilan global : " + str(global_result["error"])[:180])
+    digest_result = _publish_live_digest(fixtures)
+    if digest_result.get("published"):
+        published.append({"type": "live_digest", "post_id": digest_result.get("post_id")})
+    elif digest_result.get("error"):
+        errors.append("Résumé live : " + str(digest_result["error"])[:180])
     return {"ok": True, "facebook_page": page.get("name"), "source": source,
             "fixtures_checked": len(fixtures), "published_count": len(published),
-            "skipped_or_duplicate_count": skipped, "errors": errors[:10],
-            "provider_errors": provider_errors}
+            "skipped_or_duplicate_count": skipped, "live_digest": digest_result,
+            "daily_results": daily_result, "daily_program": program_result,
+            "global_daily_results": global_result, "errors": errors[:10], "provider_errors": provider_errors}
 
 def api_get(endpoint, params):
     try:
