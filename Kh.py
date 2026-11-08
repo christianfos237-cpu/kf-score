@@ -571,13 +571,13 @@ def _make_match_image(home, away, score_home, score_away, competition, phase, fi
         max_lines = 5 if phase_label == "TERMINÉ" else 4
         shown = scorer_lines[:max_lines]
         for i, line in enumerate(shown):
-            center_text(line[:70], width // 2, 755 + i * 35, font_scorer, (225, 230, 238, 255))
+            centered(line[:70], width // 2, 755 + i * 35, font_scorer, (225, 230, 238, 255))
 
     # Fixed footer.
     draw.rounded_rectangle((55, 1010, width - 55, 1235), radius=24, fill=(12, 16, 25, 245), outline=(255, 255, 255, 28), width=2)
-    center_text("KF SCORE", width // 2, 1050, font_brand, (255, 255, 255, 255))
-    center_text(comp, width // 2, 1125, font_comp, (190, 198, 210, 255))
-    center_text("#KFScore", width // 2, 1180, font_tag, (225, 230, 238, 255))
+    centered("KF SCORE", width // 2, 1050, font_brand, (255, 255, 255, 255))
+    centered(comp, width // 2, 1125, font_comp, (190, 198, 210, 255))
+    centered("#KFScore", width // 2, 1180, font_tag, (225, 230, 238, 255))
 
     out = BytesIO()
     img.save(out, format="JPEG", quality=92, optimize=True)
