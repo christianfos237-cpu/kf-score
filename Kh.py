@@ -4,6 +4,7 @@ import os
 import sys
 import sqlite3
 import hashlib
+import json
 from datetime import datetime
 
 app = Flask(__name__)
@@ -16,6 +17,17 @@ HEADERS = {"x-apisports-key": API_KEY}
 SPORTMONKS_TOKEN = os.getenv("SPORTMONKS_TOKEN", "").strip()
 SPORTMONKS_URL = "https://api.sportmonks.com/v3/football"
 SPORTMONKS_HEADERS = {"Authorization": SPORTMONKS_TOKEN} if SPORTMONKS_TOKEN else {}
+
+# Fournisseurs complémentaires (interrogés uniquement en secours, jamais en parallèle).
+HIGHLIGHTLY_API_KEY = os.getenv("HIGHLIGHTLY_API_KEY", "").strip()
+GOAL_API_KEY = os.getenv("GOAL_API_KEY", "").strip()
+FOOTBALL_DATA_API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "").strip()
+THESPORTSDB_API_KEY = os.getenv("THESPORTSDB_API_KEY", "123").strip() or "123"
+# Quatre sources ajoutées : clés conservées dans les variables Render.
+SPORTAPI_API_KEY = os.getenv("SPORTAPI_API_KEY", "").strip()
+SPORTSCORE_API_KEY = os.getenv("SPORTSCORE_API_KEY", "").strip()  # API publique : clé non requise pour le flux documenté
+SPORTSAPI_APP_KEY = os.getenv("SPORTSAPI_APP_KEY", "").strip()
+FOOTBALLAPI_ORG_KEY = os.getenv("FOOTBALLAPI_ORG_KEY", "").strip()
 
 # Facebook Page publishing
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "").strip()
@@ -179,6 +191,7 @@ def init_automation_db():
         os.makedirs(parent, exist_ok=True)
     with sqlite3.connect(path, timeout=20) as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS published_events (event_key TEXT PRIMARY KEY, post_id TEXT, created_at TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS provider_cache (provider TEXT PRIMARY KEY, fetched_at REAL NOT NULL, payload TEXT NOT NULL, error TEXT)")
         conn.commit()
 
 
@@ -928,6 +941,277 @@ def _match_has_started(fixture):
     return short in active_codes or any(name in state for name in active_names)
 
 
+def _provider_request(url, headers=None, params=None, timeout=12):
+    """GET prudent pour les fournisseurs de secours; ne journalise jamais les clés."""
+    try:
+        response = requests.get(url, headers=headers or {}, params=params or {}, timeout=timeout)
+        if response.status_code != 200:
+            return None, "HTTP " + str(response.status_code)
+        payload = response.json()
+        return payload, None
+    except Exception as exc:
+        return None, "connexion: " + str(exc)[:160]
+
+
+def _simple_internal(mid, home, away, hs, aws, status, league, country="", kickoff="", events=None, provider=""):
+    """Convertit un match tiers vers le format interne KF SCORE."""
+    home, away = str(home or "Équipe"), str(away or "Équipe")
+    return {
+        "id": str(mid), "name": home + " vs " + away,
+        "participants": [
+            {"id": "home", "name": home, "meta": {"location": "home"}},
+            {"id": "away", "name": away, "meta": {"location": "away"}},
+        ],
+        "scores": [
+            {"participant_id": "home", "description": "CURRENT", "score": {"goals": hs if hs is not None else 0}},
+            {"participant_id": "away", "description": "CURRENT", "score": {"goals": aws if aws is not None else 0}},
+        ],
+        "state": {"name": str(status or "")}, "status": {"long": str(status or ""), "short": str(status or "")},
+        "league": {"name": str(league or "Football"), "country": str(country or "")},
+        "events": events or [], "lineups": [], "kickoff_date": str(kickoff or ""), "_provider": provider,
+    }
+
+
+def goal_api_fixtures():
+    if not GOAL_API_KEY:
+        return [], "GOAL_API_KEY non configuré"
+    headers = {"Authorization": "Bearer " + GOAL_API_KEY}
+    payload, err = _provider_request("https://api.goal-api.com/v1/fixtures/live", headers)
+    if err:
+        return [], "GOAL API " + err
+    rows = payload.get("data", []) if isinstance(payload, dict) else []
+    out = []
+    for x in rows if isinstance(rows, list) else []:
+        out.append(_simple_internal(x.get("id"), x.get("homeTeamName"), x.get("awayTeamName"),
+            x.get("homeTeamScore"), x.get("awayTeamScore"), x.get("matchStatus"),
+            x.get("leagueName") or x.get("competitionName"), x.get("countryName"),
+            x.get("kickoffUtc"), provider="goal-api"))
+    return out, None
+
+
+def highlightly_fixtures():
+    if not HIGHLIGHTLY_API_KEY:
+        return [], "HIGHLIGHTLY_API_KEY non configuré"
+    headers = {"x-rapidapi-key": HIGHLIGHTLY_API_KEY}
+    payload, err = _provider_request("https://soccer.highlightly.net/matches", headers,
+                                     {"date": datetime.utcnow().strftime("%Y-%m-%d"), "limit": 100})
+    if err:
+        return [], "Highlightly " + err
+    rows = payload.get("data", []) if isinstance(payload, dict) else []
+    out = []
+    for x in rows if isinstance(rows, list) else []:
+        home = x.get("homeTeam") or x.get("home") or {}
+        away = x.get("awayTeam") or x.get("away") or {}
+        score = x.get("score") or {}
+        hs = score.get("home") if isinstance(score, dict) else None
+        aws = score.get("away") if isinstance(score, dict) else None
+        status = x.get("status") or x.get("matchStatus") or ""
+        league = x.get("league") or {}
+        out.append(_simple_internal(x.get("id"), _nested_name(home), _nested_name(away), hs, aws,
+            _nested_name(status, str(status)), _nested_name(league, "Football"),
+            str(league.get("country") or "") if isinstance(league, dict) else "",
+            x.get("date") or x.get("kickoff") or "", provider="highlightly"))
+    return out, None
+
+
+def football_data_fixtures():
+    if not FOOTBALL_DATA_API_KEY:
+        return [], "FOOTBALL_DATA_API_KEY non configuré"
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    payload, err = _provider_request("https://api.football-data.org/v4/matches",
+        {"X-Auth-Token": FOOTBALL_DATA_API_KEY}, {"dateFrom": today, "dateTo": today})
+    if err:
+        return [], "football-data.org " + err
+    rows = payload.get("matches", []) if isinstance(payload, dict) else []
+    out = []
+    for x in rows if isinstance(rows, list) else []:
+        h, a = x.get("homeTeam") or {}, x.get("awayTeam") or {}
+        score = x.get("score") or {}; full = score.get("fullTime") or {}; current = score.get("regularTime") or full
+        comp = x.get("competition") or {}
+        out.append(_simple_internal(x.get("id"), h.get("name"), a.get("name"),
+            current.get("home"), current.get("away"), x.get("status"), comp.get("name"),
+            (comp.get("area") or {}).get("name"), x.get("utcDate"), provider="football-data"))
+    return out, None
+
+
+def sportapi_fixtures():
+    """SportAPI.ai : fixtures du jour, clé dans X-Api-Key, format documenté."""
+    if not SPORTAPI_API_KEY:
+        return [], "SPORTAPI_API_KEY non configuré"
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    payload, err = _provider_request(
+        "https://sportapi.ai/api/fixtures/date/" + today,
+        {"X-Api-Key": SPORTAPI_API_KEY}
+    )
+    if err:
+        return [], "SportAPI " + err
+    rows = payload.get("fixtures", []) if isinstance(payload, dict) else []
+    out = []
+    for x in rows if isinstance(rows, list) else []:
+        if not isinstance(x, dict):
+            continue
+        out.append(_simple_internal(x.get("id"), x.get("home_team"), x.get("away_team"),
+            x.get("home_score"), x.get("away_score"), x.get("status"),
+            x.get("league_name") or "Football", x.get("country") or "", x.get("date") or x.get("kickoff"),
+            provider="sportapi"))
+    return out, None
+
+
+def sportscore_fixtures():
+    """SportScore : flux public sans clé selon sa documentation développeur."""
+    payload, err = _provider_request(
+        "https://sportscore.com/api/widget/matches/", params={"sport": "football", "limit": 50}
+    )
+    if err:
+        return [], "SportScore " + err
+    rows = payload.get("data", []) if isinstance(payload, dict) else []
+    out = []
+    for x in rows if isinstance(rows, list) else []:
+        if not isinstance(x, dict):
+            continue
+        home = x.get("home") or x.get("homeTeam") or {}
+        away = x.get("away") or x.get("awayTeam") or {}
+        score = x.get("score") or {}
+        hs = x.get("homeScore", score.get("home") if isinstance(score, dict) else None)
+        aws = x.get("awayScore", score.get("away") if isinstance(score, dict) else None)
+        if isinstance(hs, dict): hs = hs.get("current") or hs.get("display")
+        if isinstance(aws, dict): aws = aws.get("current") or aws.get("display")
+        out.append(_simple_internal(x.get("id") or x.get("slug"), _nested_name(home), _nested_name(away),
+            hs, aws, _nested_name(x.get("status"), str(x.get("status") or "")),
+            _nested_name(x.get("league") or x.get("competition"), "Football"),
+            x.get("country") or "", x.get("startTime") or x.get("date"), provider="sportscore"))
+    return out, None
+
+
+def sportsapi_app_fixtures():
+    """SportsAPI.app : live football snapshots, Bearer key."""
+    if not SPORTSAPI_APP_KEY:
+        return [], "SPORTSAPI_APP_KEY non configuré"
+    payload, err = _provider_request(
+        "https://api.sportsapi.app/v2/livescores", {"Authorization": "Bearer " + SPORTSAPI_APP_KEY},
+        {"sport": "football"}
+    )
+    if err:
+        return [], "SportsAPI.app " + err
+    rows = payload.get("data", []) if isinstance(payload, dict) else []
+    out = []
+    for x in rows if isinstance(rows, list) else []:
+        if not isinstance(x, dict):
+            continue
+        home, away = x.get("home") or {}, x.get("away") or {}
+        hs, aws = x.get("homeScore") or {}, x.get("awayScore") or {}
+        status = x.get("status") or {}
+        league = x.get("league") or {}
+        out.append(_simple_internal(x.get("id"), _nested_name(home), _nested_name(away),
+            hs.get("current") if isinstance(hs, dict) else hs,
+            aws.get("current") if isinstance(aws, dict) else aws,
+            _nested_name(status, "LIVE"), _nested_name(league, "Football"),
+            str(league.get("country") or "") if isinstance(league, dict) else "",
+            x.get("startTime"), provider="sportsapi-app"))
+    return out, None
+
+
+def footballapi_org_fixtures():
+    """FootballAPI.org : offre gratuite limitée aux fixtures/results PL, pas au live."""
+    if not FOOTBALLAPI_ORG_KEY:
+        return [], "FOOTBALLAPI_ORG_KEY non configuré"
+    payload, err = _provider_request(
+        "https://api.footballapi.org/v1/fixtures/today",
+        {"X-API-Key": FOOTBALLAPI_ORG_KEY}, {"competition": "premier-league"}
+    )
+    if err:
+        return [], "FootballAPI.org " + err
+    rows = payload.get("data", []) if isinstance(payload, dict) else []
+    out = []
+    for x in rows if isinstance(rows, list) else []:
+        if not isinstance(x, dict):
+            continue
+        home = x.get("home") or x.get("home_club") or {}
+        away = x.get("away") or x.get("away_club") or {}
+        score = x.get("score") or {}
+        out.append(_simple_internal(x.get("id") or x.get("match_id"),
+            _nested_name(home, x.get("home_name", "")), _nested_name(away, x.get("away_name", "")),
+            score.get("home") if isinstance(score, dict) else None,
+            score.get("away") if isinstance(score, dict) else None,
+            x.get("status") or "SCHEDULED", x.get("competition_name") or "Premier League",
+            "England", x.get("kickoff") or x.get("date"), provider="footballapi-org"))
+    return out, None
+
+
+def openligadb_fixtures():
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    payload, err = _provider_request("https://api.openligadb.de/getmatchdata/" + today)
+    if err:
+        return [], "OpenLigaDB " + err
+    out = []
+    for x in payload if isinstance(payload, list) else []:
+        teams = x.get("matchResults") or []
+        result = (teams[-1].get("points") or {}) if teams else {}
+        out.append(_simple_internal(x.get("matchID"), (x.get("team1") or {}).get("teamName"),
+            (x.get("team2") or {}).get("teamName"), result.get("pointsTeam1"), result.get("pointsTeam2"),
+            "FINISHED" if x.get("matchIsFinished") else "SCHEDULED", (x.get("leagueName") or "Football"),
+            "Germany", x.get("matchDateTimeUTC"), provider="openligadb"))
+    return out, None
+
+
+def thesportsdb_fixtures():
+    # La clé gratuite 123 ne donne pas les livescores Premium. On limite ce recours aux événements du jour.
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    key = THESPORTSDB_API_KEY or "123"
+    payload, err = _provider_request("https://www.thesportsdb.com/api/v1/json/" + key + "/eventsday.php",
+                                     params={"d": today, "s": "Soccer"})
+    if err:
+        return [], "TheSportsDB " + err
+    out = []
+    for x in (payload or {}).get("events", []) or []:
+        if not isinstance(x, dict): continue
+        out.append(_simple_internal(x.get("idEvent"), x.get("strHomeTeam"), x.get("strAwayTeam"),
+            x.get("intHomeScore"), x.get("intAwayScore"), x.get("strStatus") or "SCHEDULED",
+            x.get("strLeague"), x.get("strCountry"), x.get("dateEvent") or "", provider="thesportsdb"))
+    return out, None
+
+
+def _cached_provider_call(provider, ttl_seconds=600):
+    """Cache persistant : un fournisseur secondaire n'est pas rappelé à chaque cycle."""
+    init_automation_db()
+    name = provider.__name__
+    path = automation_db_path()
+    now = datetime.utcnow().timestamp()
+    with sqlite3.connect(path, timeout=20) as conn:
+        row = conn.execute("SELECT fetched_at, payload, error FROM provider_cache WHERE provider=?", (name,)).fetchone()
+    if row and now - float(row[0]) < ttl_seconds:
+        try:
+            return json.loads(row[1]), row[2]
+        except Exception:
+            pass
+    ttl_seconds = 2700 if provider is footballapi_org_fixtures else (60 if provider is sportscore_fixtures else ttl_seconds)
+    fixtures, error = provider()
+    try:
+        serialized = json.dumps(fixtures or [], ensure_ascii=False)
+        with sqlite3.connect(path, timeout=20) as conn:
+            conn.execute("INSERT OR REPLACE INTO provider_cache(provider,fetched_at,payload,error) VALUES(?,?,?,?)",
+                         (name, now, serialized, error))
+            conn.commit()
+    except Exception:
+        pass
+    return fixtures, error
+
+
+def supplemental_fallback_fixtures():
+    """Interroge les fournisseurs en cascade uniquement quand les sources principales sont vides."""
+    providers = [goal_api_fixtures, highlightly_fixtures, sportapi_fixtures,
+                 sportsapi_app_fixtures, sportscore_fixtures, football_data_fixtures,
+                 footballapi_org_fixtures, openligadb_fixtures, thesportsdb_fixtures]
+    errors = []
+    for provider in providers:
+        fixtures, error = _cached_provider_call(provider, 600)
+        if fixtures:
+            return fixtures, errors, provider.__name__
+        if error:
+            errors.append(error)
+    return [], errors, None
+
+
 def run_automation_once():
     """One polling cycle. Configure as a Render Cron Job for scheduled polling."""
     if not FB_PAGE_ACCESS_TOKEN:
@@ -949,6 +1233,11 @@ def run_automation_once():
             fixtures, source = sm_fixtures, sm_source
         elif not fixtures:
             fixtures = []
+    if not fixtures:
+        extra_fixtures, extra_errors, extra_source = supplemental_fallback_fixtures()
+        provider_errors.extend(extra_errors)
+        if extra_fixtures:
+            fixtures, source = extra_fixtures, extra_source
     if not fixtures and provider_errors:
         return {"ok": False, "facebook_page": page.get("name"), "provider_errors": provider_errors}
     if not fixtures:
