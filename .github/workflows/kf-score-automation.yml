@@ -1,0 +1,32 @@
+name: KF SCORE - Automatisation des matchs
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kf-score-automation
+  cancel-in-progress: false
+
+jobs:
+  publish-match-events:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Déclencher l'automatisation sur Render
+        env:
+          AUTOMATION_SECRET: ${{ secrets.KF_AUTOMATION_SECRET }}
+        run: |
+          if [ -z "$AUTOMATION_SECRET" ]; then
+            echo "Secret KF_AUTOMATION_SECRET manquant."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error \
+            --max-time 240 \
+            --request POST \
+            --header "X-Automation-Secret: ${AUTOMATION_SECRET}" \
+            "https://kf-score-3.onrender.com/api/automation/run"
