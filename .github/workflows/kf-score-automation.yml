@@ -1,4 +1,4 @@
-lname: KF SCORE - Automatisation des matchs
+name: KF SCORE - Automatisation des matchs
 
 on:
   # Déclenche un premier test dès qu'un commit est envoyé sur main.
