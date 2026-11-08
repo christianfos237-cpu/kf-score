@@ -69,7 +69,7 @@ def sportmonks_live_or_fixtures():
     """Try the live feed first; fall back to today's fixtures if that feed is not enabled."""
     live_data, live_error = sportmonks_get(
         "livescores/inplay",
-        {"include": "scores;events;participants;state;league"}
+        {"include": "scores;events.player;participants;state;league;venue"}
     )
     if not live_error:
         return live_data.get("data", []), None, "livescores/inplay"
@@ -79,7 +79,7 @@ def sportmonks_live_or_fixtures():
     today = datetime.now().strftime("%Y-%m-%d")
     fixture_data, fixture_error = sportmonks_get(
         "fixtures/date/" + today,
-        {"include": "scores;events;participants;state;league", "per_page": 50}
+        {"include": "scores;events.player;participants;state;league;venue", "per_page": 50}
     )
     if not fixture_error:
         return fixture_data.get("data", []), None, "fixtures/date"
@@ -119,6 +119,7 @@ def facebook_page_info():
 
 
 def facebook_publish(message):
+    """Publish a text-only post to the configured Facebook Page."""
     if not FB_PAGE_ACCESS_TOKEN:
         return None, "FB_PAGE_ACCESS_TOKEN non configuré"
     page_id = FB_PAGE_ID
@@ -132,6 +133,35 @@ def facebook_publish(message):
         return None, error
     return payload.get("id"), None
 
+
+def facebook_publish_photo(message, image_bytes, filename="kfscore-match.png"):
+    """Publish a generated match visual and caption to the Page."""
+    if not FB_PAGE_ACCESS_TOKEN:
+        return None, "FB_PAGE_ACCESS_TOKEN non configuré"
+    page_id = FB_PAGE_ID
+    if not page_id:
+        page, error = facebook_page_info()
+        if error:
+            return None, error
+        page_id = page["id"]
+    url = FB_GRAPH_URL + "/" + page_id + "/photos"
+    try:
+        response = requests.post(
+            url,
+            headers={"Authorization": "Bearer " + FB_PAGE_ACCESS_TOKEN},
+            data={"caption": message},
+            files={"source": (filename, image_bytes, "image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "image/png")},
+            timeout=45
+        )
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        if response.status_code >= 400 or payload.get("error"):
+            return None, "Facebook photo HTTP " + str(response.status_code) + " : " + _safe_api_message(response, FB_PAGE_ACCESS_TOKEN)
+        return payload.get("post_id") or payload.get("id"), None
+    except Exception as e:
+        return None, "Erreur publication image Facebook : " + str(e)[:300]
 
 def automation_db_path():
     configured = os.getenv("KF_SCORE_DB_PATH", "").strip()
@@ -180,18 +210,124 @@ def publish_once(event_key, message):
 
 def _nested_name(value, fallback=""):
     if isinstance(value, dict):
-        return str(value.get("name") or value.get("short_name") or fallback)
+        return str(value.get("name") or value.get("common_name") or value.get("short_code") or fallback)
     if isinstance(value, str):
         return value
     return fallback
 
 
+# Emojis de clubs : liste extensible, sans modifier les noms officiels.
+CLUB_EMOJI = {
+    "manchester united": "👹", "chelsea": "🧿", "real madrid": "⚪",
+    "tottenham": "🐔", "tottenham hotspur": "🐔", "liverpool": "🔴",
+    "arsenal": "🔴", "barcelona": "🔵🔴", "manchester city": "🔵",
+    "bayern munich": "🔴", "borussia dortmund": "🟡⚫", "dortmund": "🟡⚫",
+    "juventus": "⚫⚪", "inter": "🔵⚫", "ac milan": "🔴⚫",
+    "paris saint-germain": "🔵🔴", "psg": "🔵🔴", "atletico madrid": "🔴⚪"
+}
+
+COUNTRY_FLAGS = {
+    "guinea": "🇬🇳", "argentina": "🇦🇷", "hungary": "🇭🇺", "spain": "🇪🇸",
+    "france": "🇫🇷", "england": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "germany": "🇩🇪", "brazil": "🇧🇷",
+    "portugal": "🇵🇹", "senegal": "🇸🇳", "cameroon": "🇨🇲", "nigeria": "🇳🇬",
+    "ivory coast": "🇨🇮", "côte d'ivoire": "🇨🇮", "morocco": "🇲🇦", "netherlands": "🇳🇱",
+    "italy": "🇮🇹", "uruguay": "🇺🇾", "belgium": "🇧🇪", "norway": "🇳🇴"
+}
+
+
+# Noms français normalisés pour les publications Facebook.
+TEAM_NAMES_FR = {
+    "fc barcelona": "FC BARCELONE", "barcelona": "FC BARCELONE",
+    "atletico madrid": "ATLÉTICO DE MADRID", "atlético madrid": "ATLÉTICO DE MADRID",
+    "real madrid": "REAL MADRID", "bayern munich": "BAYERN MUNICH",
+    "borussia dortmund": "BORUSSIA DORTMUND", "manchester united": "MANCHESTER UNITED",
+    "manchester city": "MANCHESTER CITY", "tottenham hotspur": "TOTTENHAM",
+    "paris saint-germain": "PARIS SAINT-GERMAIN", "psg": "PARIS SAINT-GERMAIN",
+    "inter milan": "INTER MILAN", "internazionale": "INTER MILAN", "inter": "INTER MILAN",
+    "ac milan": "AC MILAN", "juventus": "JUVENTUS", "liverpool": "LIVERPOOL",
+    "chelsea": "CHELSEA", "arsenal": "ARSENAL", "newcastle united": "NEWCASTLE UNITED",
+    "aston villa": "ASTON VILLA", "west ham united": "WEST HAM", "nottingham forest": "NOTTINGHAM FOREST",
+    "eintracht frankfurt": "EINTRACHT FRANCFORT", "bayer 04 leverkusen": "BAYER LEVERKUSEN",
+    "paris fc": "PARIS FC", "olympique de marseille": "OLYMPIQUE DE MARSEILLE",
+    "olympique lyonnais": "OLYMPIQUE LYONNAIS", "as monaco": "AS MONACO",
+    "lille osc": "LOSC LILLE", "rc lens": "RC LENS", "ajax amsterdam": "AJAX AMSTERDAM",
+    "sporting clube de portugal": "SPORTING CP", "al hilal": "AL-HILAL",
+    "al nassr": "AL-NASSR", "inter miami": "INTER MIAMI"
+}
+
+# Drapeaux des clubs utilisés notamment en Ligue des champions.
+CLUB_COUNTRY_FLAGS = {
+    "fc barcelona": "🇪🇸", "barcelona": "🇪🇸", "real madrid": "🇪🇸",
+    "atletico madrid": "🇪🇸", "atlético madrid": "🇪🇸", "sevilla": "🇪🇸",
+    "bayern munich": "🇩🇪", "borussia dortmund": "🇩🇪", "bayer leverkusen": "🇩🇪",
+    "rb leipzig": "🇩🇪", "liverpool": "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f",
+    "manchester united": "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f",
+    "manchester city": "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f",
+    "arsenal": "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f",
+    "chelsea": "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f",
+    "tottenham": "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f",
+    "tottenham hotspur": "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f",
+    "paris saint-germain": "🇫🇷", "psg": "🇫🇷", "marseille": "🇫🇷",
+    "inter": "🇮🇹", "inter milan": "🇮🇹", "internazionale": "🇮🇹",
+    "ac milan": "🇮🇹", "juventus": "🇮🇹", "napoli": "🇮🇹", "roma": "🇮🇹",
+    "ajax": "🇳🇱", "psv": "🇳🇱", "feyenoord": "🇳🇱",
+    "benfica": "🇵🇹", "porto": "🇵🇹", "sporting cp": "🇵🇹",
+    "galatasaray": "🇹🇷", "fenerbahce": "🇹🇷", "celtic": "🏴\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f"
+}
+
+COMPETITION_NAMES_FR = {
+    "uefa champions league": "Ligue des champions",
+    "champions league": "Ligue des champions",
+    "uefa europa league": "Ligue Europa",
+    "europa league": "Ligue Europa",
+    "uefa conference league": "Ligue Conférence",
+    "conference league": "Ligue Conférence",
+    "premier league": "Premier League", "bundesliga": "Bundesliga",
+    "serie a": "Serie A", "la liga": "Liga", "laliga": "Liga",
+    "ligue 1": "Ligue 1", "eredivisie": "Eredivisie",
+    "saudi pro league": "Championnat d'Arabie saoudite",
+    "major league soccer": "Championnat des États-Unis", "mls": "Championnat des États-Unis"
+}
+
+
+def _french_team_name(name):
+    raw = str(name or "Équipe").strip()
+    return TEAM_NAMES_FR.get(raw.lower(), raw.upper())
+
+
+def _is_champions_league(competition):
+    name = str(competition or "").lower()
+    return "champions league" in name or "uefa champions" in name or "ligue des champions" in name
+
+
+def _club_label(name, competition=None, side="home"):
+    raw = str(name or "Équipe").strip()
+    team_name = _french_team_name(raw)
+    if _is_champions_league(competition):
+        # Respect strict KF SCORE placement: home flag before the club,
+        # away flag after the club name.
+        flag = CLUB_COUNTRY_FLAGS.get(raw.lower(), "⚽")
+        return (flag + " " + team_name) if side == "home" else (team_name + " " + flag)
+    emoji = CLUB_EMOJI.get(raw.lower(), "⚽")
+    return emoji + " " + team_name
+
+
 def _fixture_teams(fixture):
     participants = fixture.get("participants") or []
-    names = []
+    home = away = ""
     for item in participants:
-        if isinstance(item, dict):
-            names.append(str(item.get("name") or item.get("short_code") or "Équipe"))
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("short_code") or "Équipe")
+        meta = item.get("meta") or {}
+        location = str(meta.get("location") or item.get("location") or "").lower()
+        if location == "home":
+            home = name
+        elif location == "away":
+            away = name
+    if home and away:
+        return home, away
+    names = [str(x.get("name") or x.get("short_code") or "Équipe") for x in participants if isinstance(x, dict)]
     if len(names) >= 2:
         return names[0], names[1]
     name = str(fixture.get("name") or "Match")
@@ -200,37 +336,395 @@ def _fixture_teams(fixture):
     return name, ""
 
 
-def _event_description(event, home, away):
-    event_type = _nested_name(event.get("type") or event.get("type_name") or event.get("event_type"), "")
-    detail = " ".join(str(event.get(k) or "") for k in ("name", "addition", "info", "description", "result")).strip()
-    label = (event_type + " " + detail).lower()
-    minute = event.get("minute") or event.get("time") or {}
-    if isinstance(minute, dict):
-        minute = minute.get("minute") or minute.get("elapsed") or ""
-    minute_text = (str(minute) + "e minute") if minute not in (None, "") else ""
-    player = _nested_name(event.get("player"), str(event.get("player_name") or ""))
-    if "goal" in label or "but" in label:
-        return "⚽ BUT ! " + (player + " — " if player else "") + home + " - " + away + (" (" + minute_text + ")" if minute_text else "")
-    if "yellow" in label or "jaune" in label:
-        return "🟨 Carton jaune" + (" pour " + player if player else "") + " — " + home + " - " + away + (" (" + minute_text + ")" if minute_text else "")
-    if "red" in label or "rouge" in label:
-        return "🟥 Carton rouge" + (" pour " + player if player else "") + " — " + home + " - " + away + (" (" + minute_text + ")" if minute_text else "")
+def _fixture_scores(fixture):
+    """Return current home/away score, preferring Sportmonks CURRENT score rows."""
+    participants = fixture.get("participants") or []
+    home_id = away_id = None
+    for team in participants:
+        if not isinstance(team, dict):
+            continue
+        loc = str((team.get("meta") or {}).get("location") or team.get("location") or "").lower()
+        if loc == "home": home_id = team.get("id")
+        if loc == "away": away_id = team.get("id")
+    scores = fixture.get("scores") or []
+    chosen = {}
+    for row in scores:
+        if not isinstance(row, dict):
+            continue
+        desc = str(row.get("description") or "").upper()
+        if desc and desc not in ("CURRENT", "2ND_HALF", "1ST_HALF", "FT", "FULLTIME"):
+            continue
+        participant_id = row.get("participant_id")
+        value = row.get("score")
+        if isinstance(value, dict): value = value.get("goals")
+        if value is None: continue
+        if participant_id == home_id: chosen["home"] = value
+        elif participant_id == away_id: chosen["away"] = value
+    if "home" in chosen and "away" in chosen:
+        return str(chosen["home"]), str(chosen["away"])
+    vals = []
+    for row in scores:
+        if isinstance(row, dict):
+            value = row.get("score")
+            if isinstance(value, dict): value = value.get("goals")
+            if value is not None: vals.append(str(value))
+    return (vals[0], vals[1]) if len(vals) >= 2 else ("0", "0")
+
+
+def _minute(event):
+    value = event.get("minute") or event.get("time") or event.get("fixture_period") or ""
+    if isinstance(value, dict):
+        value = value.get("minute") or value.get("elapsed") or ""
+    extra = event.get("extra_minute") or event.get("added_time")
+    return str(value) + ("+" + str(extra) if extra else "")
+
+
+def _event_kind(event):
+    kind = _nested_name(event.get("type") or event.get("type_name") or event.get("type_id") or event.get("event_type"), "")
+    detail = " ".join(str(event.get(k) or "") for k in ("name", "addition", "info", "description", "result"))
+    text = (kind + " " + detail).lower()
+    if any(x in text for x in ("red card", "redcard", "carton rouge", "second yellow", "2nd yellow")):
+        return "red"
+    if any(x in text for x in ("goal", "own goal", "penalty scored", "but")):
+        return "goal"
+    if any(x in text for x in ("yellow card", "yellowcard", "carton jaune")):
+        return "yellow"
     return None
 
 
+def _player_name(event):
+    player = event.get("player") or event.get("player_name") or event.get("player_name_en") or ""
+    return _nested_name(player, str(player))
+
+
+def _player_flag(event):
+    player = event.get("player") if isinstance(event.get("player"), dict) else {}
+    nationality = str(player.get("nationality") or event.get("nationality") or "").lower()
+    return COUNTRY_FLAGS.get(nationality, "")
+
+
+def _competition_name(fixture):
+    league = fixture.get("league") or fixture.get("competition") or {}
+    return _nested_name(league, str(fixture.get("league_name") or "Football"))
+
+
+def _competition_name_fr(fixture):
+    raw = _competition_name(fixture)
+    return COMPETITION_NAMES_FR.get(raw.lower(), raw)
+
+
+def _competition_hashtag(competition):
+    name = str(competition or "").lower()
+    mapping = (
+        (("champions league", "uefa champions"), "#UCL"),
+        (("europa league",), "#UEL"),
+        (("conference league",), "#UECL"),
+        (("premier league",), "#PremierLeague"),
+        (("bundesliga",), "#Bundesliga"),
+        (("serie a",), "#SerieA"),
+        (("la liga", "laliga"), "#LaLiga"),
+        (("ligue 1", "ligue1"), "#Ligue1"),
+        (("eredivisie",), "#Eredivisie"),
+        (("saudi pro",), "#SaudiProLeague"),
+        (("mls", "major league soccer"), "#MLS"),
+    )
+    for needles, tag in mapping:
+        if any(item in name for item in needles):
+            return tag
+    return "#Football"
+
+
+def _format_scorers(events):
+    lines = []
+    for event in sorted(events, key=lambda e: (int(_minute(e).split("+")[0]) if _minute(e).split("+")[0].isdigit() else 999, str(e.get("id") or ""))):
+        if _event_kind(event) != "goal":
+            continue
+        player = _player_name(event)
+        if not player:
+            continue
+        minute = _minute(event)
+        flag = _player_flag(event)
+        lines.append((flag + " " if flag else "") + player + (" " + minute + "'" if minute else ""))
+    return lines
+
+
+def _image_url_from(value):
+    """Find an image URL only in explicitly supplied media/image fields."""
+    if isinstance(value, dict):
+        for key in ("match_action_image", "action_image", "match_image", "image_path", "photo_url", "image_url", "image", "photo", "picture"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.startswith(("https://", "http://")):
+                return candidate
+            if isinstance(candidate, dict):
+                found = _image_url_from(candidate)
+                if found:
+                    return found
+        # Search nested media containers, but never player/profile objects.
+        for key in ("media", "images", "gallery", "venue", "stadium"):
+            if key in value:
+                found = _image_url_from(value[key])
+                if found:
+                    return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _image_url_from(child)
+            if found:
+                return found
+    return None
+
+
+def _download_photo(url):
+    """Download a real provider-supplied photograph; reject non-image responses."""
+    if not url:
+        return None
+    try:
+        from io import BytesIO
+        from PIL import Image
+        response = requests.get(url, timeout=12, headers={"User-Agent": "KFScore/1.0"})
+        response.raise_for_status()
+        if len(response.content) > 8 * 1024 * 1024:
+            return None
+        photo = Image.open(BytesIO(response.content)).convert("RGB")
+        photo.thumbnail((1800, 2200))
+        return photo
+    except Exception:
+        return None
+
+
+def _match_action_photo_url(fixture, events):
+    """Only accept explicit match/media images, never a player's portrait."""
+    for event in events or []:
+        # Event objects may expose editorial/action media. Do not inspect event['player'].
+        for key in ("media", "images", "match_action_image", "action_image", "match_image"):
+            url = _image_url_from(event.get(key)) if isinstance(event, dict) else None
+            if url:
+                return url
+    return None
+
+
+def _stadium_photo_url(fixture):
+    """Use a real venue/stadium image as the fallback when the provider supplies one."""
+    venue = fixture.get("venue") or fixture.get("stadium") or {}
+    return _image_url_from(venue)
+
+
+def _make_match_image(home, away, score_home, score_away, competition, phase, fixture, events=None):
+    """Create the fixed KF SCORE match card. No player/stadium photographs are used."""
+    from io import BytesIO
+    from PIL import Image, ImageDraw, ImageFont
+
+    width, height = 1080, 1350
+    img = Image.new("RGB", (width, height), (8, 11, 18))
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    # Fixed background: deliberately identical for every KF SCORE publication.
+    draw.rectangle((0, 0, width, height), fill=(8, 11, 18, 255))
+    draw.ellipse((-260, 300, 1340, 1900), fill=(18, 24, 38, 180))
+    draw.ellipse((180, 470, 900, 1190), outline=(255, 255, 255, 20), width=3)
+    draw.line((0, 830, width, 830), fill=(255, 255, 255, 16), width=2)
+    draw.line((width // 2, 470, width // 2, 1190), fill=(255, 255, 255, 12), width=2)
+
+    # Fixed top branding and status.
+    try:
+        font_brand = ImageFont.truetype("DejaVuSans-Bold.ttf", 58)
+        font_status = ImageFont.truetype("DejaVuSans-Bold.ttf", 42)
+        font_comp = ImageFont.truetype("DejaVuSans-Bold.ttf", 28)
+        font_team = ImageFont.truetype("DejaVuSans-Bold.ttf", 34)
+        font_score = ImageFont.truetype("DejaVuSans-Bold.ttf", 122)
+        font_scorer = ImageFont.truetype("DejaVuSans-Bold.ttf", 25)
+        font_tag = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
+    except Exception:
+        font_brand = font_status = font_comp = font_team = font_score = font_scorer = font_tag = ImageFont.load_default()
+
+    draw.rounded_rectangle((38, 30, 365, 108), radius=18, fill=(20, 25, 36, 245), outline=(255, 255, 255, 35), width=2)
+    draw.text((62, 43), "KF SCORE", font=font_brand, fill=(255, 255, 255, 255))
+
+    phase_label = "MI-TEMPS" if str(phase).lower() in ("mi-temps", "halftime", "half time") else "TERMINÉ"
+    b = draw.textbbox((0, 0), phase_label, font=font_status)
+    draw.text(((width - (b[2] - b[0])) / 2, 150), phase_label, font=font_status, fill=(255, 255, 255, 255))
+
+    comp = COMPETITION_NAMES_FR.get(str(competition or "").lower(), str(competition or "Football"))
+    b = draw.textbbox((0, 0), comp, font=font_comp)
+    draw.text(((width - (b[2] - b[0])) / 2, 220), comp, font=font_comp, fill=(190, 198, 210, 255))
+
+    # Fixed score panel with one horizontal team/score line.
+    panel = (35, 340, width - 35, 900)
+    draw.rounded_rectangle(panel, radius=30, fill=(13, 17, 27, 245), outline=(255, 255, 255, 35), width=2)
+
+    def centered(text, cx, y, font, fill):
+        box = draw.textbbox((0, 0), text, font=font)
+        draw.text((cx - (box[2] - box[0]) / 2, y), text, font=font, fill=fill)
+
+    # Exact requested order: home flag/symbol before its name, then score,
+    # then away name followed by its flag/symbol.
+    home_label = _club_label(home, competition)
+    away_label = _club_label(away, competition, "away")
+    font_team_line = ImageFont.truetype("DejaVuSans-Bold.ttf", 27)
+    centered(home_label[:30], 255, 520, font_team_line, (255, 255, 255, 255))
+    centered(str(score_home) + " - " + str(score_away), width // 2, 455, font_score, (255, 255, 255, 255))
+    centered(away_label[:30], 825, 520, font_team_line, (255, 255, 255, 255))
+
+    # Scorers are fixed in the same area; only their data changes.
+    scorer_lines = _format_scorers(events or [])
+    if scorer_lines:
+        draw.line((130, 735, width - 130, 735), fill=(255, 255, 255, 18), width=2)
+        max_lines = 5 if phase_label == "TERMINÉ" else 4
+        shown = scorer_lines[:max_lines]
+        for i, line in enumerate(shown):
+            center_text(line[:70], width // 2, 755 + i * 35, font_scorer, (225, 230, 238, 255))
+
+    # Fixed footer.
+    draw.rounded_rectangle((55, 1010, width - 55, 1235), radius=24, fill=(12, 16, 25, 245), outline=(255, 255, 255, 28), width=2)
+    center_text("KF SCORE", width // 2, 1050, font_brand, (255, 255, 255, 255))
+    center_text(comp, width // 2, 1125, font_comp, (190, 198, 210, 255))
+    center_text("#KFScore", width // 2, 1180, font_tag, (225, 230, 238, 255))
+
+    out = BytesIO()
+    img.save(out, format="JPEG", quality=92, optimize=True)
+    out.seek(0)
+    return out.getvalue()
+
+
+def _publish_match_post(key, message, fixture, home, away, score_home, score_away, phase, with_image=False):
+    """Claim dedupe key, then publish either a card or a text-only post."""
+    init_automation_db()
+    path = automation_db_path()
+    with sqlite3.connect(path, timeout=20) as conn:
+        if conn.execute("SELECT 1 FROM published_events WHERE event_key = ?", (key,)).fetchone():
+            return {"published": False, "reason": "already_published"}
+        try:
+            conn.execute("INSERT INTO published_events(event_key, post_id, created_at) VALUES (?, 'PENDING', ?)", (key, datetime.utcnow().isoformat()))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            return {"published": False, "reason": "already_claimed"}
+    if with_image:
+        image_bytes = _make_match_image(home, away, score_home, score_away, _competition_name(fixture), phase, fixture, fixture.get("events") or [])
+        if not image_bytes:
+            with sqlite3.connect(path, timeout=20) as conn:
+                conn.execute("DELETE FROM published_events WHERE event_key = ? AND post_id = 'PENDING'", (key,))
+                conn.commit()
+            return {"published": False, "reason": "impossible de créer le visuel fixe KF SCORE"}
+        post_id, error = facebook_publish_photo(message, image_bytes, "kfscore-" + str(fixture.get("id")) + "-" + phase.lower().replace(" ", "-") + ".jpg")
+    else:
+        post_id, error = facebook_publish(message)
+    with sqlite3.connect(path, timeout=20) as conn:
+        if error:
+            conn.execute("DELETE FROM published_events WHERE event_key = ? AND post_id = 'PENDING'", (key,))
+            conn.commit()
+            return {"published": False, "error": error}
+        conn.execute("UPDATE published_events SET post_id = ? WHERE event_key = ?", (post_id or "OK", key))
+        conn.commit()
+    return {"published": True, "post_id": post_id}
+
+
+def _fixture_state(fixture):
+    status = fixture.get("status") or {}
+    if isinstance(status, dict):
+        status = status.get("long") or status.get("short") or ""
+    return _nested_name(fixture.get("state"), str(fixture.get("state_name") or status or "")).lower().replace("_", " ").strip()
+
+
+def _api_football_to_internal(item, events=None):
+    """Convert API-Football v3 data to the internal match format used by KF SCORE."""
+    teams = item.get("teams") or {}
+    home = teams.get("home") or {}
+    away = teams.get("away") or {}
+    league = item.get("league") or {}
+    fixture_info = item.get("fixture") or {}
+    home_id, away_id = home.get("id"), away.get("id")
+    raw_events = []
+    for ev in events or []:
+        tm = ev.get("time") or {}
+        player = ev.get("player") or {}
+        raw_events.append({
+            "id": ev.get("id") or "",
+            "type": ev.get("type") or "",
+            "name": ev.get("detail") or "",
+            "minute": tm.get("elapsed") or "",
+            "extra_minute": tm.get("extra"),
+            "player": {"name": player.get("name") or ""},
+            "team": ev.get("team") or {},
+        })
+    status = fixture_info.get("status") or {}
+    return {
+        "id": fixture_info.get("id"),
+        "name": (home.get("name") or "Équipe") + " vs " + (away.get("name") or "Équipe"),
+        "participants": [
+            {"id": home_id, "name": home.get("name") or "Équipe", "meta": {"location": "home"}},
+            {"id": away_id, "name": away.get("name") or "Équipe", "meta": {"location": "away"}},
+        ],
+        "scores": [
+            {"participant_id": home_id, "description": "CURRENT", "score": {"goals": (item.get("goals") or {}).get("home") if (item.get("goals") or {}).get("home") is not None else 0}},
+            {"participant_id": away_id, "description": "CURRENT", "score": {"goals": (item.get("goals") or {}).get("away") if (item.get("goals") or {}).get("away") is not None else 0}},
+        ],
+        "state": {"name": status.get("long") or status.get("short") or ""},
+        "status": status,
+        "league": {"name": league.get("name") or "Football", "country": league.get("country") or ""},
+        "events": raw_events,
+        "_provider": "api-football",
+    }
+
+
+def api_football_live_or_today():
+    """Use API-Football as primary source; fetch event details only for active/finished games."""
+    if not API_KEY:
+        return [], "API_FOOTBALL_KEY non configuré", None
+    data, error = api_get("fixtures", {"live": "all", "timezone": "Africa/Douala"})
+    source = "fixtures?live=all"
+    if error:
+        return [], error, None
+    items = data.get("response") or []
+    if not items:
+        today = datetime.now().strftime("%Y-%m-%d")
+        data, error = api_get("fixtures", {"date": today, "timezone": "Africa/Douala"})
+        if error:
+            return [], error, None
+        items = data.get("response") or []
+        source = "fixtures?date=" + today
+    normalized = []
+    # Keep request volume bounded; API-Football's daily/minute quota is plan-dependent.
+    for item in items[:30]:
+        status = ((item.get("fixture") or {}).get("status") or {}).get("short", "")
+        events = []
+        if status not in ("NS", "TBD", "PST", "CANC", "ABD", "AWD", "WO"):
+            fixture_id = (item.get("fixture") or {}).get("id")
+            if fixture_id:
+                event_data, event_error = api_get("fixtures/events", {"fixture": fixture_id})
+                if event_data:
+                    events = event_data.get("response") or []
+        normalized.append(_api_football_to_internal(item, events))
+    return normalized, None, source
+
+
 def run_automation_once():
-    """One polling cycle. Intended for a Render Cron Job, not a web request thread."""
+    """One polling cycle. Configure as a Render Cron Job for scheduled polling."""
     if not FB_PAGE_ACCESS_TOKEN:
         return {"ok": False, "error": "FB_PAGE_ACCESS_TOKEN non configuré"}
     page, fb_error = facebook_page_info()
     if fb_error:
         return {"ok": False, "error": "Vérification Facebook impossible : " + fb_error}
-    fixtures, sm_error, source = sportmonks_live_or_fixtures()
-    if sm_error:
-        return {"ok": False, "facebook_page": page.get("name"), "error": sm_error}
+    # API-Football is the primary feed. Sportmonks is retained as a fallback;
+    # a Sportmonks 403 is a subscription restriction, not something code can bypass.
+    fixtures, api_error, source = api_football_live_or_today()
+    provider_errors = []
+    if api_error:
+        provider_errors.append("API-Football : " + api_error)
+    if api_error or not fixtures:
+        sm_fixtures, sm_error, sm_source = sportmonks_live_or_fixtures()
+        if sm_error:
+            provider_errors.append("Sportmonks : " + sm_error)
+        elif sm_fixtures:
+            fixtures, source = sm_fixtures, sm_source
+        elif not fixtures:
+            fixtures = []
+    if not fixtures and provider_errors:
+        return {"ok": False, "facebook_page": page.get("name"), "provider_errors": provider_errors}
+    if not fixtures:
+        return {"ok": True, "facebook_page": page.get("name"), "source": source,
+                "fixtures_checked": 0, "published_count": 0, "skipped_or_duplicate_count": 0,
+                "provider_errors": provider_errors, "message": "Aucun match à traiter pour le moment."}
 
-    published = []
-    skipped = 0
+    published, skipped, errors = [], 0, []
     for fixture in fixtures:
         if not isinstance(fixture, dict):
             continue
@@ -238,47 +732,69 @@ def run_automation_once():
         if not fixture_id:
             continue
         home, away = _fixture_teams(fixture)
+        score_home, score_away = _fixture_scores(fixture)
         events = fixture.get("events") or []
+        competition = _competition_name(fixture)
+        state = _fixture_state(fixture)
+
+        # Only goals and red cards are published live. Yellow cards are intentionally ignored.
         for event in events:
             if not isinstance(event, dict):
                 continue
-            message = _event_description(event, home, away)
-            if not message:
+            kind = _event_kind(event)
+            if kind not in ("goal", "red"):
                 continue
-            event_id = str(event.get("id") or "")
-            if not event_id:
-                signature = "|".join(str(event.get(k) or "") for k in ("type_id", "minute", "player_id", "player_name", "name", "addition"))
-                event_id = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:20]
-            key = "sportmonks:event:" + fixture_id + ":" + event_id
-            result = publish_once(key, "KF SCORE\n" + message + "\n\nSuivez les matchs avec KF Score.")
-            if result.get("published"):
-                published.append({"event": key, "post_id": result.get("post_id")})
+            player = _player_name(event) or "Joueur"
+            flag = _player_flag(event)
+            teams_line = _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
+            if kind == "goal":
+                headline = "🚨 BUUUUT DE " + player.upper() + ((" " + flag) if flag else "")
+                key_type = "goal"
             else:
-                skipped += 1
+                headline = "🟥 CARTON ROUGE DE " + player.upper() + ((" " + flag) if flag else "")
+                key_type = "red"
+            message = headline + "\n\n" + teams_line + "\n\n" + _competition_hashtag(competition) + " #KFScore"
+            event_id = str(event.get("id") or hashlib.sha256((key_type + "|" + _minute(event) + "|" + player).encode("utf-8")).hexdigest()[:24])
+            provider = fixture.get("_provider", "sportmonks")
+            result = _publish_match_post(provider + ":" + key_type + ":" + fixture_id + ":" + event_id,
+                                         message, fixture, home, away, score_home, score_away,
+                                         key_type, with_image=False)
+            if result.get("published"): published.append(result)
+            elif result.get("error"): errors.append(result["error"])
+            else: skipped += 1
 
-        state = _nested_name(fixture.get("state"), str(fixture.get("state_name") or "")).lower()
+        # Halftime post: one per match, with a generated match graphic.
+        if state in ("half time", "halftime", "ht", "break"):
+            key = fixture.get("_provider", "sportmonks") + ":halftime:" + fixture_id
+            scorers = _format_scorers(events)
+            message = "🚨 𝗠𝗜-𝗧𝗘𝗠𝗣𝗦 ⏱️\n\n" + _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
+            message += "\n\n🏆 " + _competition_name_fr(fixture)
+            if scorers:
+                message += "\n\n⚽ 𝗕𝗨𝗧𝗘𝗨𝗥𝗦\n" + "\n".join(scorers)
+            message += "\n\n" + _competition_hashtag(competition) + " #KFScore"
+            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away, "Mi-temps", with_image=True)
+            if result.get("published"): published.append(result)
+            elif result.get("error"): errors.append(result["error"])
+            else: skipped += 1
+
+        # Full-time post: one per match, using the same fixed KF SCORE graphic template.
         if state in ("ft", "aet", "pen", "full time", "finished", "after extra time", "after penalties"):
-            scores = fixture.get("scores") or []
-            score_parts = []
-            for score in scores:
-                if isinstance(score, dict):
-                    score_value = score.get("score")
-                    if isinstance(score_value, dict):
-                        score_value = score_value.get("goals")
-                    if score_value is not None:
-                        score_parts.append(str(score_value))
-            if len(score_parts) >= 2:
-                key = "sportmonks:fulltime:" + fixture_id
-                msg = "🏁 FIN DU MATCH\n" + home + " " + score_parts[0] + " - " + score_parts[1] + " " + away
-                result = publish_once(key, "KF SCORE\n" + msg + "\n\nSuivez les résultats avec KF Score.")
-                if result.get("published"):
-                    published.append({"event": key, "post_id": result.get("post_id")})
-                else:
-                    skipped += 1
+            key = fixture.get("_provider", "sportmonks") + ":fulltime:" + fixture_id
+            scorers = _format_scorers(events)
+            message = "🚨 𝗧𝗘𝗥𝗠𝗜𝗡É ⏱️\n\n" + _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
+            message += "\n\n🏆 " + _competition_name_fr(fixture)
+            if scorers:
+                message += "\n\n⚽ 𝗕𝗨𝗧𝗘𝗨𝗥𝗦\n" + "\n".join(scorers)
+            message += "\n\n" + _competition_hashtag(competition) + " #KFScore"
+            result = _publish_match_post(key, message, fixture, home, away, score_home, score_away, "Terminé", with_image=True)
+            if result.get("published"): published.append(result)
+            elif result.get("error"): errors.append(result["error"])
+            else: skipped += 1
 
     return {"ok": True, "facebook_page": page.get("name"), "source": source,
             "fixtures_checked": len(fixtures), "published_count": len(published),
-            "skipped_or_duplicate_count": skipped, "published": published}
+            "skipped_or_duplicate_count": skipped, "errors": errors[:10],
+            "provider_errors": provider_errors}
 
 def api_get(endpoint, params):
     try:
@@ -289,11 +805,17 @@ def api_get(endpoint, params):
             timeout=20
         )
 
-        data = r.json()
+        try:
+            data = r.json()
+        except Exception:
+            data = {}
 
         if r.status_code != 200:
-            return None, "Erreur API : " + str(r.status_code)
-
+            detail = _safe_api_message(r, API_KEY)
+            return None, "API-Football HTTP " + str(r.status_code) + " : " + detail
+        api_errors = data.get("errors") if isinstance(data, dict) else None
+        if api_errors:
+            return None, "API-Football : " + str(api_errors)[:500]
         return data, None
 
     except Exception as e:
@@ -383,7 +905,7 @@ def sportmonks_fixture(fixture_id):
     data, error = sportmonks_get(
         "fixtures/" + str(fixture_id),
         {
-            "include": "participants;scores;state;league;events;lineups;statistics"
+            "include": "participants;scores;state;league;events.player;lineups;statistics"
         }
     )
 
