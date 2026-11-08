@@ -301,13 +301,9 @@ def _is_champions_league(competition):
 
 
 def _club_label(name, competition=None, side="home"):
+    """KF SCORE: team-colour emoji always appears before the team name."""
     raw = str(name or "Équipe").strip()
     team_name = _french_team_name(raw)
-    if _is_champions_league(competition):
-        # Respect strict KF SCORE placement: home flag before the club,
-        # away flag after the club name.
-        flag = CLUB_COUNTRY_FLAGS.get(raw.lower(), "⚽")
-        return (flag + " " + team_name) if side == "home" else (team_name + " " + flag)
     emoji = CLUB_EMOJI.get(raw.lower(), "⚽")
     return emoji + " " + team_name
 
@@ -399,8 +395,30 @@ def _player_name(event):
 
 def _player_flag(event):
     player = event.get("player") if isinstance(event.get("player"), dict) else {}
-    nationality = str(player.get("nationality") or event.get("nationality") or "").lower()
-    return COUNTRY_FLAGS.get(nationality, "")
+    nationality = str(player.get("nationality") or event.get("nationality") or "").strip().lower()
+    return COUNTRY_FLAGS.get(nationality, "⚽")
+
+
+def _player_display_name(event):
+    """Use the player's familiar surname/name only, never first + last names."""
+    player_obj = event.get("player") if isinstance(event.get("player"), dict) else {}
+    raw = str(player_obj.get("common_name") or player_obj.get("display_name") or
+              event.get("common_name") or _player_name(event) or "Joueur").strip()
+    # Preserve familiar football names that are commonly displayed by their first name.
+    familiar = {
+        "vinícius júnior": "VINÍCIUS", "vinicius junior": "VINÍCIUS",
+        "luka modrić": "MODRIĆ", "luka modric": "MODRIĆ",
+    }
+    if raw.casefold() in familiar:
+        return familiar[raw.casefold()]
+    parts = raw.split()
+    return (parts[-1] if parts else "Joueur").upper()
+
+
+def _emoji_score(value):
+    digits = {"0": "0️⃣", "1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣",
+              "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"}
+    return "".join(digits.get(char, char) for char in str(value if value is not None else 0))
 
 
 def _competition_name(fixture):
@@ -435,17 +453,49 @@ def _competition_hashtag(competition):
 
 
 def _format_scorers(events):
+    """Format every scorer event and mark each player's goal sequence."""
     lines = []
-    for event in sorted(events, key=lambda e: (int(_minute(e).split("+")[0]) if _minute(e).split("+")[0].isdigit() else 999, str(e.get("id") or ""))):
+    ordered = sorted(events or [], key=lambda e: (
+        int(_minute(e).split("+")[0]) if _minute(e).split("+")[0].isdigit() else 999,
+        str(e.get("id") or "")
+    ))
+    counts = {}
+    goal_marks = ("❶", "❷", "❸", "❹", "❺", "❻")
+    for event in ordered:
         if _event_kind(event) != "goal":
             continue
-        player = _player_name(event)
+        player = _player_display_name(event)
         if not player:
             continue
+        identity = (str((event.get("team") or {}).get("id") or "") + "|" + player.casefold())
+        counts[identity] = counts.get(identity, 0) + 1
+        mark = goal_marks[min(counts[identity], len(goal_marks)) - 1]
         minute = _minute(event)
         flag = _player_flag(event)
-        lines.append((flag + " " if flag else "") + player + (" " + minute + "'" if minute else ""))
+        detail = " ".join(str(event.get(k) or "") for k in ("name", "detail", "addition", "info")).lower()
+        penalty = "(P)" if "penalty" in detail or "pen." in detail else ""
+        line = (flag + " " if flag else "⚽ ") + player
+        if minute:
+            line += " " + minute + "'"
+        if penalty:
+            line += " " + penalty
+        line += "(" + mark + ")"
+        lines.append(line)
     return lines
+
+
+def _fulltime_headline(home, away, score_home, score_away):
+    """Short neutral match summary for the full-time graphic and caption."""
+    try:
+        h, a = int(score_home), int(score_away)
+    except (TypeError, ValueError):
+        return "🔥 FIN DU MATCH !"
+    if h == a:
+        return "🔥 LES DEUX ÉQUIPES SE QUITTENT SUR UN NUL !"
+    winner = home if h > a else away
+    if h + a >= 5:
+        return "🔥 " + str(winner).upper() + " S'OFFRE UN FESTIVAL OFFENSIF !"
+    return "🔥 " + str(winner).upper() + " S'IMPOSE !"
 
 
 def _image_url_from(value):
@@ -564,26 +614,167 @@ def _make_match_image(home, away, score_home, score_away, competition, phase, fi
     centered(str(score_home) + " - " + str(score_away), width // 2, 455, font_score, (255, 255, 255, 255))
     centered(away_label[:30], 825, 520, font_team_line, (255, 255, 255, 255))
 
-    # Scorers are fixed in the same area; only their data changes.
+    # The full-time visual uses the agreed detailed scorer-list format.
     scorer_lines = _format_scorers(events or [])
+    is_fulltime = phase_label == "TERMINÉ"
     if scorer_lines:
-        draw.line((130, 735, width - 130, 735), fill=(255, 255, 255, 18), width=2)
-        max_lines = 5 if phase_label == "TERMINÉ" else 4
+        draw.line((75, 700, width - 75, 700), fill=(255, 255, 255, 28), width=2)
+        list_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 21 if is_fulltime else 24)
+        max_lines = 12 if is_fulltime else 4
         shown = scorer_lines[:max_lines]
+        start_y = 718
+        line_gap = 30 if is_fulltime else 36
         for i, line in enumerate(shown):
-            centered(line[:70], width // 2, 755 + i * 35, font_scorer, (225, 230, 238, 255))
+            centered(line[:78], width // 2, start_y + i * line_gap, list_font, (235, 239, 246, 255))
+        if len(scorer_lines) > max_lines:
+            centered("ET " + str(len(scorer_lines) - max_lines) + " AUTRE(S) BUT(S)", width // 2,
+                     start_y + max_lines * line_gap, list_font, (255, 205, 70, 255))
 
-    # Fixed footer.
-    draw.rounded_rectangle((55, 1010, width - 55, 1235), radius=24, fill=(12, 16, 25, 245), outline=(255, 255, 255, 28), width=2)
-    centered("KF SCORE", width // 2, 1050, font_brand, (255, 255, 255, 255))
-    centered(comp, width // 2, 1125, font_comp, (190, 198, 210, 255))
-    centered("#KFScore", width // 2, 1180, font_tag, (225, 230, 238, 255))
+    # Full-time summary and KF SCORE signature.
+    if is_fulltime:
+        headline = _fulltime_headline(home, away, score_home, score_away)
+        centered(headline[:58], width // 2, 1115, font_tag, (255, 205, 70, 255))
+        centered("#KFScore", width // 2, 1200, font_tag, (225, 230, 238, 255))
+    else:
+        draw.rounded_rectangle((55, 1010, width - 55, 1235), radius=24, fill=(12, 16, 25, 245), outline=(255, 255, 255, 28), width=2)
+        centered("KF SCORE", width // 2, 1050, font_brand, (255, 255, 255, 255))
+        centered(comp, width // 2, 1125, font_comp, (190, 198, 210, 255))
+        centered("#KFScore", width // 2, 1180, font_tag, (225, 230, 238, 255))
 
     out = BytesIO()
     img.save(out, format="JPEG", quality=92, optimize=True)
     out.seek(0)
     return out.getvalue()
 
+
+
+def _lineup_player_flag(player):
+    nationality = str(player.get("nationality") or "").strip().lower()
+    return COUNTRY_FLAGS.get(nationality, "🌐")
+
+
+def _format_lineup_team(team_lineup):
+    """Return starting XI lines; only use nationality when provider supplies it."""
+    team = team_lineup.get("team") or {}
+    name = str(team.get("name") or "ÉQUIPE").upper()
+    lines = [name]
+    players = team_lineup.get("startXI") or team_lineup.get("start_xi") or []
+    for entry in players:
+        player = entry.get("player") if isinstance(entry, dict) else entry
+        if not isinstance(player, dict):
+            continue
+        player_name = str(player.get("name") or player.get("common_name") or "Joueur").strip()
+        position = str(player.get("pos") or player.get("position") or "").upper()
+        goalkeeper = " 🧤" if position in ("G", "GK", "GOALKEEPER") else ""
+        lines.append(_lineup_player_flag(player) + "  " + player_name + goalkeeper)
+    return name, lines
+
+
+def _make_lineups_image(home, away, lineups, kickoff_gmt, competition):
+    """Create a KF SCORE official-lineups graphic using the same dark visual identity."""
+    from io import BytesIO
+    from PIL import Image, ImageDraw, ImageFont
+    width, height = 1080, 1350
+    img = Image.new("RGB", (width, height), (8, 11, 18))
+    draw = ImageDraw.Draw(img, "RGBA")
+    draw.rectangle((0, 0, width, height), fill=(8, 11, 18, 255))
+    draw.ellipse((-260, 300, 1340, 1500), fill=(18, 24, 38, 180))
+    try:
+        title = ImageFont.truetype("DejaVuSans-Bold.ttf", 40)
+        team_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 25)
+        player_font = ImageFont.truetype("DejaVuSans.ttf", 19)
+        small = ImageFont.truetype("DejaVuSans-Bold.ttf", 22)
+    except Exception:
+        title = team_font = player_font = small = ImageFont.load_default()
+    def centered(text, y, font, fill=(255,255,255,255)):
+        box = draw.textbbox((0,0), text, font=font)
+        draw.text(((width-(box[2]-box[0]))/2, y), text, font=font, fill=fill)
+    centered("KF SCORE", 28, small)
+    centered(kickoff_gmt + " GMT", 90, title, (255,205,70,255))
+    centered(home + "  🆚  " + away, 150, team_font)
+    centered("COMPOSITIONS OFFICIELLES", 205, title)
+    # Two columns; 11 starters per team.
+    columns = [lineups[0] if len(lineups)>0 else {}, lineups[1] if len(lineups)>1 else {}]
+    col_x = [42, 552]
+    for idx, data in enumerate(columns):
+        team_name, lines = _format_lineup_team(data)
+        x = col_x[idx]
+        draw.rounded_rectangle((x, 280, x+486, 1195), radius=22, fill=(15,21,34,245), outline=(255,255,255,35), width=2)
+        draw.text((x+18, 300), team_name[:25], font=team_font, fill=(255,205,70,255))
+        y = 365
+        for line in lines[1:12]:
+            draw.text((x+18, y), line[:36], font=player_font, fill=(240,243,248,255))
+            y += 67
+    centered(_competition_name_fr({"league":{"name":competition}}), 1230, small, (190,198,210,255))
+    centered("#KFScore", 1285, small)
+    out=BytesIO(); img.save(out, format="JPEG", quality=92, optimize=True); out.seek(0)
+    return out.getvalue()
+
+def _publish_lineups_post(key, message, fixture, image_bytes):
+    """Publish an official-lineups caption and its dedicated KF SCORE image once."""
+    init_automation_db()
+    path = automation_db_path()
+    with sqlite3.connect(path, timeout=20) as conn:
+        if conn.execute("SELECT 1 FROM published_events WHERE event_key = ?", (key,)).fetchone():
+            return {"published": False, "reason": "already_published"}
+        try:
+            conn.execute("INSERT INTO published_events(event_key, post_id, created_at) VALUES (?, 'PENDING', ?)",
+                         (key, datetime.utcnow().isoformat()))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            return {"published": False, "reason": "already_claimed"}
+    post_id, error = facebook_publish_photo(message, image_bytes, "kfscore-lineups-" + str(fixture.get("id")) + ".jpg")
+    with sqlite3.connect(path, timeout=20) as conn:
+        if error:
+            conn.execute("DELETE FROM published_events WHERE event_key = ? AND post_id = 'PENDING'", (key,))
+            conn.commit()
+            return {"published": False, "error": error}
+        conn.execute("UPDATE published_events SET post_id = ? WHERE event_key = ?", (post_id or "OK", key))
+        conn.commit()
+    return {"published": True, "post_id": post_id}
+
+# Compétitions majeures autorisées pour les compositions officielles.
+MAJOR_LINEUP_COMPETITIONS = (
+    "uefa champions league", "champions league", "uefa europa league",
+    "europa league", "uefa conference league", "conference league",
+    "premier league", "la liga", "laliga", "serie a", "bundesliga",
+    "ligue 1", "fa cup", "copa del rey", "coppa italia", "dfb-pokal",
+)
+
+def _is_major_lineup_competition(name):
+    value = str(name or "").strip().lower()
+    return any(token in value for token in MAJOR_LINEUP_COMPETITIONS)
+
+def _format_match_statistics(statistics):
+    """Format API-Football statistics as a French Facebook comment."""
+    if not isinstance(statistics, list) or len(statistics) < 2:
+        return ""
+    labels = {
+        "Corner Kicks": ("⛳", "Corners"), "Yellow Cards": ("🟨", "Cartons jaunes"),
+        "Red Cards": ("🟥", "Cartons rouges"), "Offsides": ("⛔", "Hors-jeu"),
+        "Substitutions": ("🔁", "Changements"), "Goalkeeper Saves": ("🧤", "Arrêts gardien"),
+        "Total Shots": ("🏹", "Tirs totaux"), "Shots on Goal": ("🎯", "Tirs cadrés"),
+        "Tackles": ("⚔️", "Tacles"), "Fouls": ("⚠️", "Fautes"),
+        "Ball Possession": ("🅿️", "Possession"),
+    }
+    def collect(team):
+        return {str(x.get("type")): x.get("value") for x in (team.get("statistics") or []) if isinstance(x, dict)}
+    home, away = collect(statistics[0]), collect(statistics[1])
+    lines = ["📊 STATISTIQUES"]
+    for api_name, (emoji, label) in labels.items():
+        a, b = home.get(api_name), away.get(api_name)
+        if a is None and b is None:
+            continue
+        a = "0" if a is None else str(a)
+        b = "0" if b is None else str(b)
+        lines.append(f"{emoji} {label} : {a}-{b}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+def _publish_statistics_comment(post_id, statistics):
+    text = _format_match_statistics(statistics)
+    if not post_id or not text:
+        return None, "Statistiques indisponibles"
+    return facebook_request("POST", str(post_id) + "/comments", {"message": text})
 
 def _publish_match_post(key, message, fixture, home, away, score_home, score_away, phase, with_image=False):
     """Claim dedupe key, then publish either a card or a text-only post."""
@@ -661,6 +852,8 @@ def _api_football_to_internal(item, events=None):
         "status": status,
         "league": {"name": league.get("name") or "Football", "country": league.get("country") or ""},
         "events": raw_events,
+        "lineups": item.get("_kf_lineups") or [],
+        "kickoff_date": fixture_info.get("date") or "",
         "_provider": "api-football",
     }
 
@@ -701,12 +894,25 @@ def api_football_live_or_today():
     for item in items[:50]:
         status = ((item.get("fixture") or {}).get("status") or {}).get("short", "")
         events = []
-        if status not in ("NS", "TBD", "PST", "CANC", "ABD", "AWD", "WO"):
-            fixture_id = (item.get("fixture") or {}).get("id")
-            if fixture_id:
-                event_data, event_error = api_get("fixtures/events", {"fixture": fixture_id})
-                if event_data:
-                    events = event_data.get("response") or []
+        fixture_id = (item.get("fixture") or {}).get("id")
+        if status not in ("NS", "TBD", "PST", "CANC", "ABD", "AWD", "WO") and fixture_id:
+            event_data, event_error = api_get("fixtures/events", {"fixture": fixture_id})
+            if event_data:
+                events = event_data.get("response") or []
+        # Fetch official starting XIs only for fixtures due within the next 120 minutes.
+        if status in ("NS", "TBD") and fixture_id:
+            try:
+                from datetime import timezone
+                kickoff = datetime.fromisoformat(str((item.get("fixture") or {}).get("date", "")).replace("Z", "+00:00"))
+                now_utc = datetime.now(timezone.utc)
+                if kickoff.tzinfo is None:
+                    kickoff = kickoff.replace(tzinfo=timezone.utc)
+                if 0 <= (kickoff - now_utc).total_seconds() <= 7200:
+                    lineup_data, lineup_error = api_get("fixtures/lineups", {"fixture": fixture_id})
+                    if lineup_data:
+                        item["_kf_lineups"] = lineup_data.get("response") or []
+            except Exception:
+                pass
         normalized.append(_api_football_to_internal(item, events))
     return normalized, None, source
 
@@ -763,14 +969,63 @@ def run_automation_once():
         competition = _competition_name(fixture)
         state = _fixture_state(fixture)
 
+        # Official lineups: only major competitions, published from 60 to 15 minutes before kickoff.
+        lineups = fixture.get("lineups") or []
+        lineup_window = False
+        try:
+            from datetime import timezone
+            kickoff_check = datetime.fromisoformat(str(fixture.get("kickoff_date") or "").replace("Z", "+00:00"))
+            if kickoff_check.tzinfo is None:
+                kickoff_check = kickoff_check.replace(tzinfo=timezone.utc)
+            minutes_to_kickoff = (kickoff_check - datetime.now(timezone.utc)).total_seconds() / 60
+            lineup_window = 15 <= minutes_to_kickoff <= 60
+        except Exception:
+            lineup_window = False
+        if len(lineups) >= 2 and lineup_window and _is_major_lineup_competition(competition):
+            lineup_lines = []
+            for team_data in lineups[:2]:
+                team_name, team_lines = _format_lineup_team(team_data)
+                team_country_flag = CLUB_COUNTRY_FLAGS.get(team_name.lower(), "🌍")
+                lineup_lines.append(team_country_flag + " " + team_name + "\n" + "\n".join(team_lines[1:12]))
+            kickoff_value = str(fixture.get("kickoff_date") or "")
+            try:
+                from datetime import timezone
+                kickoff_dt = datetime.fromisoformat(kickoff_value.replace("Z", "+00:00"))
+                if kickoff_dt.tzinfo is None:
+                    kickoff_dt = kickoff_dt.replace(tzinfo=timezone.utc)
+                kickoff_gmt = kickoff_dt.astimezone(timezone.utc).strftime("%H:%M")
+            except Exception:
+                kickoff_gmt = "--:--"
+            lineup_message = ("⏰ 𝟎𝟎:𝟎𝟎 GMT | " + home + " 🆚 " + away + " composition officielle ✅\n\n" +
+                              "\n\n".join(lineup_lines) + "\n\n" +
+                              _competition_hashtag(competition) + " #KFScore")
+            lineup_message = lineup_message.replace("𝟎𝟎:𝟎𝟎", "".join({"0":"𝟎","1":"𝟏","2":"𝟐","3":"𝟑","4":"𝟒","5":"𝟓","6":"𝟔","7":"𝟕","8":"𝟖","9":"𝟗"}[c] for c in kickoff_gmt))
+            lineup_key = fixture.get("_provider", "api-football") + ":lineups:" + fixture_id
+            try:
+                lineup_image = _make_lineups_image(home, away, lineups[:2], kickoff_gmt, competition)
+                result = _publish_lineups_post(lineup_key, lineup_message, fixture, lineup_image)
+                if result.get("published"):
+                    published.append(result)
+                elif result.get("error"):
+                    errors.append(result["error"])
+                else:
+                    skipped += 1
+            except Exception as exc:
+                errors.append("Composition " + fixture_id + " : " + str(exc)[:180])
+
         # Kickoff notice: one text-only post when the provider first reports the match as started.
         if _match_has_started(fixture):
             kickoff_key = fixture.get("_provider", "sportmonks") + ":kickoff:" + fixture_id
-            kickoff_message = ("🚨 𝗖’𝗘𝗦𝗧 𝗣𝗔𝗥𝗧𝗜 ! ⚽\n\n" +
-                               _club_label(home, competition) + " - " +
-                               _club_label(away, competition, "away") + "\n\n" +
-                               "🏆 " + _competition_name_fr(fixture) + "\n\n" +
-                               _competition_hashtag(competition) + " #KFScore")
+            kickoff_teams_line = (
+                _club_label(home, competition) + " " +
+                _emoji_score(score_home) + "-" + _emoji_score(score_away) + " " +
+                _club_label(away, competition, "away")
+            )
+            kickoff_message = (
+                "🚨 COUP D'ENVOI ⏱️\n\n" +
+                kickoff_teams_line + "\n\n" +
+                _competition_hashtag(competition) + " #KFScore"
+            )
             kickoff_result = _publish_match_post(kickoff_key, kickoff_message, fixture,
                                                    home, away, score_home, score_away,
                                                    "Coup d’envoi", with_image=False)
@@ -781,22 +1036,21 @@ def run_automation_once():
             else:
                 skipped += 1
 
-        # Only goals and red cards are published live. Yellow cards are intentionally ignored.
+        # Only goals are published live. No publication is made for red or yellow cards.
         for event in events:
             if not isinstance(event, dict):
                 continue
             kind = _event_kind(event)
-            if kind not in ("goal", "red"):
+            if kind != "goal":
                 continue
-            player = _player_name(event) or "Joueur"
+            player = _player_display_name(event)
             flag = _player_flag(event)
-            teams_line = _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
+            teams_line = (_club_label(home, competition) + " " + _emoji_score(score_home) + "-" +
+                          _emoji_score(score_away) + " " + _club_label(away, competition, "away"))
             if kind == "goal":
-                headline = "🚨 BUUUUT DE " + player.upper() + ((" " + flag) if flag else "")
+                minute = _minute(event)
+                headline = "⏱️" + (minute + "'" if minute else "") + "⚽ BUUUUUT DE " + player + " " + flag
                 key_type = "goal"
-            else:
-                headline = "🟥 CARTON ROUGE DE " + player.upper() + ((" " + flag) if flag else "")
-                key_type = "red"
             message = headline + "\n\n" + teams_line + "\n\n" + _competition_hashtag(competition) + " #KFScore"
             event_id = str(event.get("id") or hashlib.sha256((key_type + "|" + _minute(event) + "|" + player).encode("utf-8")).hexdigest()[:24])
             provider = fixture.get("_provider", "sportmonks")
@@ -815,13 +1069,30 @@ def run_automation_once():
         if status_short == "HT" or state_norm in ("half time", "halftime", "ht", "break", "break time"):
             key = fixture.get("_provider", "sportmonks") + ":halftime:" + fixture_id
             scorers = _format_scorers(events)
-            message = "🚨 𝗠𝗜-𝗧𝗘𝗠𝗣𝗦 ⏱️\n\n" + _club_label(home, competition) + " " + score_home + "-" + score_away + " " + _club_label(away, competition, "away")
-            message += "\n\n🏆 " + _competition_name_fr(fixture)
+            message = ("🚨 𝗠𝗜-𝗧𝗘𝗠𝗣𝗦 ⏱️\n\n" +
+                       _club_label(home, competition) + " " + _emoji_score(score_home) + "-" +
+                       _emoji_score(score_away) + " " + _club_label(away, competition, "away"))
+            league_info = fixture.get("league") or fixture.get("competition") or {}
+            country = str(league_info.get("country") or "").strip().lower() if isinstance(league_info, dict) else ""
+            country_flags = {
+                "england": "🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f", "france": "🇫🇷", "spain": "🇪🇸", "germany": "🇩🇪",
+                "italy": "🇮🇹", "portugal": "🇵🇹", "netherlands": "🇳🇱", "saudi-arabia": "🇸🇦",
+                "saudi arabia": "🇸🇦", "united states": "🇺🇸", "usa": "🇺🇸", "cameroon": "🇨🇲",
+                "europe": "🇪🇺"
+            }
+            competition_flag = country_flags.get(country, "")
+            message += "\n\n🏆 " + _competition_name_fr(fixture) + (" " + competition_flag if competition_flag else "")
             if scorers:
                 message += "\n\n⚽ 𝗕𝗨𝗧𝗘𝗨𝗥𝗦\n" + "\n".join(scorers)
             message += "\n\n" + _competition_hashtag(competition) + " #KFScore"
             result = _publish_match_post(key, message, fixture, home, away, score_home, score_away, "Mi-temps", with_image=True)
-            if result.get("published"): published.append(result)
+            if result.get("published"):
+                published.append(result)
+                stats_data, stats_error = api_get("fixtures/statistics", {"fixture": fixture_id}) if fixture.get("_provider") == "api-football" else (None, "Statistiques non disponibles pour ce fournisseur")
+                if stats_data:
+                    _, comment_error = _publish_statistics_comment(result.get("post_id"), stats_data.get("response") or [])
+                    if comment_error: errors.append("Commentaire statistiques mi-temps " + fixture_id + " : " + comment_error)
+                elif stats_error: errors.append("Statistiques mi-temps " + fixture_id + " : " + str(stats_error)[:160])
             elif result.get("error"): errors.append(result["error"])
             else: skipped += 1
 
@@ -838,9 +1109,16 @@ def run_automation_once():
             message += "\n\n🏆 " + _competition_name_fr(fixture)
             if scorers:
                 message += "\n\n⚽ 𝗕𝗨𝗧𝗘𝗨𝗥𝗦\n" + "\n".join(scorers)
+            message += "\n\n" + _fulltime_headline(home, away, score_home, score_away)
             message += "\n\n" + _competition_hashtag(competition) + " #KFScore"
             result = _publish_match_post(key, message, fixture, home, away, score_home, score_away, "Terminé", with_image=True)
-            if result.get("published"): published.append(result)
+            if result.get("published"):
+                published.append(result)
+                stats_data, stats_error = api_get("fixtures/statistics", {"fixture": fixture_id}) if fixture.get("_provider") == "api-football" else (None, "Statistiques non disponibles pour ce fournisseur")
+                if stats_data:
+                    _, comment_error = _publish_statistics_comment(result.get("post_id"), stats_data.get("response") or [])
+                    if comment_error: errors.append("Commentaire statistiques fin de match " + fixture_id + " : " + comment_error)
+                elif stats_error: errors.append("Statistiques fin de match " + fixture_id + " : " + str(stats_error)[:160])
             elif result.get("error"): errors.append(result["error"])
             else: skipped += 1
 
