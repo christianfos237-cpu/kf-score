@@ -1350,6 +1350,49 @@ def supplemental_fallback_fixtures():
 
 
 
+def shared_match_feed(date=None):
+    """Source centrale des rencontres pour le site et les automatisations.
+
+    Priorité : API-Football, puis Sportmonks, puis fournisseurs complémentaires
+    mis en cache. Les résultats sont normalisés et dédupliqués avant diffusion.
+    Les fournisseurs secondaires ne sont sollicités qu'en cas d'indisponibilité
+    ou de réponse vide de la source principale afin de limiter les quotas.
+    """
+    fixtures, errors, source = [], [], None
+    if not date or date == "today":
+        primary, error, primary_source = api_football_live_or_today()
+        if primary:
+            fixtures, source = primary, primary_source
+        elif error:
+            errors.append("API-Football : " + str(error))
+    else:
+        # La route date conserve le fuseau local et convertit la réponse au format interne.
+        data, error = api_get("fixtures", {"date": date, "timezone": "Africa/Douala"})
+        if data:
+            raw = data.get("response") or []
+            fixtures = [_api_football_to_internal(x) for x in raw]
+            source = "api-football:fixtures?date=" + date
+        elif error:
+            errors.append("API-Football : " + str(error))
+
+    if not fixtures:
+        sm, sm_error, sm_source = sportmonks_live_or_fixtures()
+        if sm:
+            fixtures, source = sm, "sportmonks:" + str(sm_source or "fixtures")
+        elif sm_error:
+            errors.append("Sportmonks : " + str(sm_error))
+
+    if not fixtures:
+        extra, extra_errors, extra_source = supplemental_fallback_fixtures()
+        errors.extend(str(x) for x in extra_errors or [])
+        if extra:
+            fixtures, source = extra, extra_source
+
+    normalized = _deduplicate_fixtures(fixtures)
+    return {"fixtures": normalized, "source": source, "errors": errors,
+            "count": len(normalized), "date": date or "today"}
+
+
 def _canonical_match_key(fixture):
     """Identifiant stable entre fournisseurs pour une même rencontre."""
     import re, unicodedata
@@ -1758,25 +1801,10 @@ def run_automation_once():
     page, fb_error = facebook_page_info()
     if fb_error:
         return {"ok": False, "error": "Vérification Facebook impossible : " + fb_error}
-    # API-Football is the primary feed. Sportmonks is retained as a fallback;
-    # a Sportmonks 403 is a subscription restriction, not something code can bypass.
-    fixtures, api_error, source = api_football_live_or_today()
-    provider_errors = []
-    if api_error:
-        provider_errors.append("API-Football : " + api_error)
-    if api_error or not fixtures:
-        sm_fixtures, sm_error, sm_source = sportmonks_live_or_fixtures()
-        if sm_error:
-            provider_errors.append("Sportmonks : " + sm_error)
-        elif sm_fixtures:
-            fixtures, source = sm_fixtures, sm_source
-        elif not fixtures:
-            fixtures = []
-    if not fixtures:
-        extra_fixtures, extra_errors, extra_source = supplemental_fallback_fixtures()
-        provider_errors.extend(extra_errors)
-        if extra_fixtures:
-            fixtures, source = extra_fixtures, extra_source
+    # Le site et Facebook consomment la même couche centrale de données.
+    feed = shared_match_feed()
+    fixtures, source = feed["fixtures"], feed["source"]
+    provider_errors = feed["errors"]
     if not fixtures and provider_errors:
         return {"ok": False, "facebook_page": page.get("name"), "provider_errors": provider_errors}
     if not fixtures:
@@ -2008,6 +2036,15 @@ def api_get(endpoint, params):
 @app.route("/")
 def home():
     return render_template_string(HTML)
+
+@app.route("/api/matches/unified")
+def unified_matches():
+    date = request.args.get("date") or "today"
+    feed = shared_match_feed(date)
+    return jsonify({"date_demandee": feed["date"], "nombre_matchs": feed["count"],
+                    "source": feed["source"], "provider_errors": feed["errors"],
+                    "response": feed["fixtures"]})
+
 
 @app.route("/api/matches")
 def matches():
